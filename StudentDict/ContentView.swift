@@ -469,7 +469,7 @@ struct MiniIdiomView: View {
 class BopomofoSplitter {
     static func split(phonetic: String, count: Int) -> [String] {
         let normalized = phonetic.replacingOccurrences(of: "\u{3000}", with: " ")
-        var parts = normalized.components(separatedBy: " ")
+        let parts = normalized.components(separatedBy: " ")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         
