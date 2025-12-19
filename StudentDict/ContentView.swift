@@ -7,7 +7,6 @@ struct AppTheme {
     static let cardBackground = Color(.secondarySystemGroupedBackground)
     static let primary = Color.blue
     static let secondary = Color.orange
-    static let gridColor = Color.red.opacity(0.3)
     
     static func shadowColor(colorScheme: ColorScheme) -> Color {
         return colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.05)
@@ -19,7 +18,7 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var results: [DictItem] = []
     @State private var historyItems: [DictItem] = []
-    @State private var showLicense = false // 控制授權頁面顯示
+    @State private var showLicense = false
     @StateObject private var speechInput = SpeechInputManager()
     @Environment(\.colorScheme) var colorScheme
     
@@ -90,29 +89,33 @@ struct ContentView: View {
     func loadHistory() { historyItems = DatabaseManager.shared.getHistory() }
 }
 
-// MARK: - 3. License View (授權聲明頁 - 含真實頭像)
+// MARK: - 3. License View (使用原生 Link)
 struct LicenseView: View {
     @Environment(\.presentationMode) var presentationMode
+    
+    // 預先定義網址，確保正確
+    let privacyURL = URL(string: "https://eric1207cvb.github.io/StudentDict/")!
+    let eulaURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
+    let moeURL = URL(string: "https://dict.concised.moe.edu.tw/")!
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     
-                    // 區塊一：開發者資訊 (已更新鸚鵡頭像)
+                    // 1. 開發者資訊
                     VStack(alignment: .leading, spacing: 8) {
                         Text("App 設計與開發")
                             .font(.headline)
                         
                         HStack(spacing: 16) {
-                            // ✅ 這裡改用您的圖片
-                            Image("DeveloperAvatar") // 需與 Assets 裡的名稱一致
-                                .resizable()           // 允許調整大小
-                                .scaledToFill()        // 保持比例填滿
-                                .frame(width: 60, height: 60) // 設定大小
-                                .clipShape(Circle())   // 切成圓形
-                                .overlay(Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1)) // 加個細邊框更有質感
-                                .shadow(radius: 3)     // 加點陰影
+                            Image("DeveloperAvatar")
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 60, height: 60)
+                                .clipShape(Circle())
+                                .overlay(Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1))
+                                .shadow(radius: 3)
                             
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("HSUEH YI AN")
@@ -131,7 +134,41 @@ struct LicenseView: View {
                     
                     Divider()
                     
-                    // 區塊二：資料授權
+                    // 2. 法律與條款 (改用原生 Link)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("法律與條款")
+                            .font(.headline)
+                        
+                        // 隱私權政策 - 原生 Link
+                        Link(destination: privacyURL) {
+                            HStack {
+                                Label("隱私權政策 (Privacy Policy)", systemImage: "hand.raised.fill")
+                                    .foregroundColor(.blue)
+                                Spacer()
+                                Image(systemName: "arrow.up.right.square").foregroundColor(.gray)
+                            }
+                            .padding()
+                            .background(Color.blue.opacity(0.05))
+                            .cornerRadius(10)
+                        }
+                        
+                        // EULA - 原生 Link
+                        Link(destination: eulaURL) {
+                            HStack {
+                                Label("使用者授權合約 (EULA)", systemImage: "doc.text.fill")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Image(systemName: "arrow.up.right.square").foregroundColor(.gray)
+                            }
+                            .padding()
+                            .background(Color.gray.opacity(0.1))
+                            .cornerRadius(10)
+                        }
+                    }
+                    
+                    Divider()
+                    
+                    // 3. 資料授權
                     VStack(alignment: .leading, spacing: 12) {
                         Text("資料來源授權")
                             .font(.headline)
@@ -147,22 +184,31 @@ struct LicenseView: View {
                                 .foregroundColor(.secondary)
                         }
                         
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text("原始資料出處 (Attribution)：")
                                 .font(.subheadline).bold()
                             
-                            Text("中華民國教育部（Ministry of Education, R.O.C.）。《國語辭典簡編本》（網址：[https://dict.concised.moe.edu.tw/](https://dict.concised.moe.edu.tw/)）")
+                            Text("中華民國教育部（Ministry of Education, R.O.C.）。")
                                 .font(.caption)
-                                .padding()
-                                .background(Color.gray.opacity(0.1))
+                            
+                            // 教育部官網 - 原生 Link
+                            Link(destination: moeURL) {
+                                HStack {
+                                    Text("開啟教育部《國語辭典簡編本》官網")
+                                    Spacer()
+                                    Image(systemName: "globe")
+                                }
+                                .font(.caption).bold()
+                                .foregroundColor(.white)
+                                .padding(10)
+                                .background(Color.blue)
                                 .cornerRadius(8)
-                                .tint(.blue)
+                            }
                         }
                     }
                     
                     Spacer(minLength: 20)
                     
-                    // 免責聲明
                     Text("本應用程式為第三方開發，非教育部官方 App。\n僅提供查詢介面，未對原始資料內容進行任何改作。")
                         .font(.caption)
                         .foregroundColor(.gray)
@@ -490,4 +536,4 @@ struct ActionButton: View {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View { ContentView() }
-}
+}git add .
