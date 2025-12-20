@@ -29,9 +29,22 @@
 		4C2F7F302EF4F0AC003DA197 /* StudentDictUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StudentDictUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		4C2F7F5A2EF67CE4003DA197 /* Exceptions for "StudentDict" folder in "StudentDict" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 4C2F7F182EF4F0AA003DA197 /* StudentDict */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4C2F7F1B2EF4F0AA003DA197 /* StudentDict */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4C2F7F5A2EF67CE4003DA197 /* Exceptions for "StudentDict" folder in "StudentDict" target */,
+			);
 			path = StudentDict;
 			sourceTree = "<group>";
 		};
@@ -400,6 +413,7 @@
 				DEVELOPMENT_TEAM = 2RF44L5UDV;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StudentDict/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "國語辭典簡編本";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "App 需要使用麥克風來讓您進行語音搜尋。";
@@ -437,6 +451,7 @@
 				DEVELOPMENT_TEAM = 2RF44L5UDV;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StudentDict/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "國語辭典簡編本";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "App 需要使用麥克風來讓您進行語音搜尋。";
