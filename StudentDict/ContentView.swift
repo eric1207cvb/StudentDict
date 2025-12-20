@@ -604,6 +604,7 @@ struct ExpandedCandidatePanel: View {
     }
 }
 
+// 注音鍵盤元件 (已增強兒童震動回饋感)
 struct ZhuyinKeyboardView: View {
     @Binding var text: String
     var onUpdate: () -> Void
@@ -652,7 +653,11 @@ struct ZhuyinKeyboardView: View {
                                     }
                                 }
                                 if candidates.count > 15 {
-                                    Button(action: { withAnimation(.spring()) { showExpandedCandidates = true }; UIImpactFeedbackGenerator(style: .medium).impactOccurred() }) {
+                                    Button(action: {
+                                        withAnimation(.spring()) { showExpandedCandidates = true }
+                                        // [修改] 展開更多：使用中等震動
+                                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                    }) {
                                         VStack(spacing: 2) {
                                             Image(systemName: "chevron.down.circle.fill").font(.title2)
                                             Text("更多").font(.caption2).fontWeight(.bold)
@@ -672,7 +677,9 @@ struct ZhuyinKeyboardView: View {
                     ForEach(toneItems, id: \.symbol) { item in
                         Button(action: {
                             if item.symbol != "ˉ" { text += item.symbol }
-                            onUpdate(); UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            onUpdate()
+                            // [修改] 聲調按鍵：改成 .rigid (清脆堅硬感)，區分普通按鍵
+                            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                         }) {
                             VStack(spacing: 0) {
                                 Text(item.symbol).font(.system(size: 20, weight: .bold)).frame(height: 24)
@@ -685,6 +692,7 @@ struct ZhuyinKeyboardView: View {
                     }
                     Button(action: {
                         if !text.isEmpty { text.removeLast(); onUpdate() }
+                        // [維持] 刪除按鍵：維持 .heavy (重擊感)，明確知道刪掉了
                         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                     }) {
                         Image(systemName: "delete.left.fill").font(.system(size: 22)).foregroundColor(.white)
@@ -696,7 +704,12 @@ struct ZhuyinKeyboardView: View {
                 // 注音區
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(gridBopomofo, id: \.self) { char in
-                        Button(action: { text += char; onUpdate(); UIImpactFeedbackGenerator(style: .light).impactOccurred() }) {
+                        Button(action: {
+                            text += char
+                            onUpdate()
+                            // [修改] 一般注音按鍵：改成 .medium (中等扎實感)，確認感更強
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        }) {
                             Text(char).font(.system(size: 20, weight: .semibold)).foregroundColor(getTextColor(for: char))
                                 .frame(minWidth: 32, minHeight: 46).frame(maxWidth: .infinity)
                                 .background(colorScheme == .dark ? Color.white.opacity(0.15) : Color.white).cornerRadius(6)
@@ -723,7 +736,11 @@ struct ZhuyinKeyboardView: View {
     }
     private func selectChar(_ char: String) {
         while let last = text.last, BopomofoData.isBopomofo(last) { text.removeLast() }
-        text += char; onUpdate(); withAnimation { showExpandedCandidates = false }; UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        text += char
+        onUpdate()
+        withAnimation { showExpandedCandidates = false }
+        // [修改] 選字確認：改成 .rigid (清脆堅硬感)，給予完成任務的肯定
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
     private func getTextColor(for char: String) -> Color {
         if BopomofoData.initials.contains(char) { return .primary }
@@ -795,21 +812,94 @@ struct LaunchScreenView: View {
 
 struct LicenseView: View {
     @Environment(\.presentationMode) var presentationMode
+    
+    // 定義連結 (請確保這些網址是正確的)
+    let privacyURL = URL(string: "https://eric1207cvb.github.io/StudentDict/")!
+    let eulaURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
     let moeURL = URL(string: "https://dict.concised.moe.edu.tw/")!
+    
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("關於本程式").font(.largeTitle).bold()
-                    Text("資料來源：中華民國教育部《國語辭典簡編本》").font(.body)
-                    Link("前往教育部官網", destination: moeURL).font(.headline).foregroundColor(.blue)
                     
-                    Text("字型聲明").font(.title2).bold().padding(.top, 16)
-                    Text("本應用程式使用教育部標準楷書 (edukai-5.0)，字型版權歸教育部所有。").font(.body)
+                    // 1. 開發者區塊
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("App 設計與開發").font(.headline)
+                        HStack(spacing: 16) {
+                            // 請確認 Assets 中有 "DeveloperAvatar" 這張圖片
+                            Image("DeveloperAvatar")
+                                .resizable().scaledToFill()
+                                .frame(width: 60, height: 60)
+                                .clipShape(Circle())
+                                .overlay(Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1))
+                                .shadow(radius: 3)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("HSUEH YI AN").font(.title3).bold().foregroundColor(.primary)
+                                Text("Independent Developer").font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        .padding().frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemBackground)).cornerRadius(12)
+                    }
+                    
+                    Divider()
+                    
+                    // 2. 法律與條款區塊
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("法律與條款").font(.headline)
+                        Link(destination: privacyURL) {
+                            HStack {
+                                Label("隱私權政策 (Privacy Policy)", systemImage: "hand.raised.fill").foregroundColor(.blue)
+                                Spacer()
+                                Image(systemName: "arrow.up.right.square").foregroundColor(.gray)
+                            }
+                            .padding().background(Color.blue.opacity(0.05)).cornerRadius(10)
+                        }
+                        Link(destination: eulaURL) {
+                            HStack {
+                                Label("使用者授權合約 (EULA)", systemImage: "doc.text.fill").foregroundColor(.primary)
+                                Spacer()
+                                Image(systemName: "arrow.up.right.square").foregroundColor(.gray)
+                            }
+                            .padding().background(Color.gray.opacity(0.1)).cornerRadius(10)
+                        }
+                    }
+                    
+                    Divider()
+                    
+                    // 3. 資料來源授權區塊
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("資料來源授權").font(.headline)
+                        Text("本應用程式使用之資料來源為中華民國教育部《國語辭典簡編本》。").font(.body)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("授權條款：").font(.subheadline).bold()
+                            Text("創用CC-姓名標示-禁止改作 臺灣 3.0 版").font(.caption).foregroundColor(.secondary)
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("原始資料出處 (Attribution)：").font(.subheadline).bold()
+                            Text("中華民國教育部（Ministry of Education, R.O.C.）。").font(.caption)
+                            Link(destination: moeURL) {
+                                HStack {
+                                    Text("開啟教育部《國語辭典簡編本》官網")
+                                    Spacer()
+                                    Image(systemName: "globe")
+                                }
+                                .font(.caption).bold().foregroundColor(.white)
+                                .padding(10).background(Color.blue).cornerRadius(8)
+                            }
+                        }
+                    }
+                    
+                    Spacer(minLength: 20)
+                    
+                    // 4. 底部免責聲明
+                    Text("本應用程式為第三方開發，非教育部官方 App。\n僅提供查詢介面，未對原始資料內容進行任何改作。")
+                        .font(.caption).foregroundColor(.gray).multilineTextAlignment(.center).frame(maxWidth: .infinity)
                 }
                 .padding()
             }
-            .navigationTitle("關於")
+            .navigationTitle("關於本程式")
             .navigationBarItems(trailing: Button("關閉") { presentationMode.wrappedValue.dismiss() })
         }
     }
