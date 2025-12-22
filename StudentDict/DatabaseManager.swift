@@ -24,13 +24,49 @@ class DatabaseManager {
         createTables()
     }
     
+    // MARK: - Database Setup (關鍵修正：複製到可寫入目錄)
+    
+    /// 取得沙盒中 Documents 目錄下的資料庫路徑 (可讀寫)
+    private func getWritableDBPath() -> String {
+        let paths = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true)
+        let documentsDirectory = paths[0]
+        return (documentsDirectory as NSString).appendingPathComponent("dictionary.sqlite")
+    }
+    
     private func openDatabase() {
-        guard let dbPath = Bundle.main.path(forResource: "dictionary", ofType: "sqlite") else {
-            print("❌ Error: Dictionary database file not found in bundle.")
-            return
+        let writablePath = getWritableDBPath()
+        let fileManager = FileManager.default
+        
+        // 1. 檢查可寫入目錄是否存在資料庫
+        if !fileManager.fileExists(atPath: writablePath) {
+            print("📂 初次執行，準備將資料庫從 Bundle 複製到 Documents...")
+            // 如果不存在，從 App Bundle 中尋找原始檔案
+            guard let bundlePath = Bundle.main.path(forResource: "dictionary", ofType: "sqlite") else {
+                print("❌ Fatal Error: 在 Bundle 中找不到 dictionary.sqlite 原始檔！請確認檔案有加入專案。")
+                return
+            }
+            
+            // 嘗試複製
+            do {
+                try fileManager.copyItem(atPath: bundlePath, toPath: writablePath)
+                print("✅ 資料庫複製成功！路徑: \(writablePath)")
+            } catch {
+                print("❌ 資料庫複製失敗: \(error)")
+                return
+            }
+        } else {
+            print("📂 資料庫已存在於可寫入目錄，直接使用。")
         }
-        if sqlite3_open(dbPath, &db) != SQLITE_OK {
-            print("❌ Error: Unable to open database.")
+        
+        // 2. 開啟位於可寫入目錄的資料庫
+        if sqlite3_open(writablePath, &db) != SQLITE_OK {
+            print("❌ Error: 無法開啟資料庫。")
+            if let errorPointer = sqlite3_errmsg(db) {
+                let errorMessage = String(cString: errorPointer)
+                print("   SQLite Error: \(errorMessage)")
+            }
+        } else {
+            print("✅ 資料庫連線成功。")
         }
     }
     
@@ -42,54 +78,47 @@ class DatabaseManager {
         sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS history (word TEXT PRIMARY KEY, timestamp REAL);", nil, nil, nil)
     }
     
-    // MARK: - 🔍 主搜尋 (字典邏輯：僅限字首匹配)
-        func search(keyword: String) -> [DictItem] {
-            var result: [DictItem] = []
-            guard let db = db else { return [] }
+    // MARK: - 🔍 主搜尋 (字典邏輯：僅限字首匹配 + 權重排序)
+    func search(keyword: String) -> [DictItem] {
+        var result: [DictItem] = []
+        guard let db = db else { return [] }
+        
+        let querySQL = """
+            SELECT word, phonetic, definition, radical, stroke_count 
+            FROM dict_mini 
+            WHERE word LIKE ? OR phonetic LIKE ? 
+            ORDER BY 
+              CASE 
+                WHEN word = ? THEN 0 
+                ELSE 1 
+              END ASC,
+              length(word) ASC, 
+              stroke_count ASC 
+            LIMIT 100;
+        """
+        
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, querySQL, -1, &stmt, nil) == SQLITE_OK {
+            let nsKeyword = keyword as NSString
+            let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
             
-            // SQL 邏輯修正：
-            // 1. WHERE word LIKE ? -> 只允許 '關鍵字%' (開頭匹配)，移除包含匹配
-            // 2. ORDER BY -> 本字最優先 (0)，其餘為開頭詞 (1)，接著按長度與筆畫排序
+            // 1. 字首搜尋 (如輸入 "生" -> 找 "生%")
+            let prefixKeyword = "\(keyword)%"
+            sqlite3_bind_text(stmt, 1, (prefixKeyword as NSString).utf8String, -1, SQLITE_TRANSIENT)
             
-            let querySQL = """
-                SELECT word, phonetic, definition, radical, stroke_count 
-                FROM dict_mini 
-                WHERE word LIKE ? OR phonetic LIKE ? 
-                ORDER BY 
-                  CASE 
-                    WHEN word = ? THEN 0 
-                    ELSE 1 
-                  END ASC,
-                  length(word) ASC, 
-                  stroke_count ASC 
-                LIMIT 100;
-            """
+            // 2. 注音開頭搜尋 (如輸入 "ㄕ" -> 找 "ㄕ%")
+            sqlite3_bind_text(stmt, 2, (prefixKeyword as NSString).utf8String, -1, SQLITE_TRANSIENT)
             
-            var stmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, querySQL, -1, &stmt, nil) == SQLITE_OK {
-                let nsKeyword = keyword as NSString
-                let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-                
-                // 綁定參數 (關鍵修改：只用後綴 %)
-                
-                // 1. 字首搜尋 (如輸入 "生" -> 找 "生%")
-                // 這樣 "學生" (生在後面) 就不會出現了
-                let prefixKeyword = "\(keyword)%"
-                sqlite3_bind_text(stmt, 1, (prefixKeyword as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                
-                // 2. 注音開頭搜尋 (如輸入 "ㄕ" -> 找 "ㄕ%")
-                sqlite3_bind_text(stmt, 2, (prefixKeyword as NSString).utf8String, -1, SQLITE_TRANSIENT)
-                
-                // 3. 排序用：完全匹配 (如 "生" 本人)
-                sqlite3_bind_text(stmt, 3, nsKeyword.utf8String, -1, SQLITE_TRANSIENT)
-                
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    result.append(parseRow(stmt: stmt))
-                }
+            // 3. 排序用：完全匹配 (如 "生" 本人)
+            sqlite3_bind_text(stmt, 3, nsKeyword.utf8String, -1, SQLITE_TRANSIENT)
+            
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                result.append(parseRow(stmt: stmt))
             }
-            sqlite3_finalize(stmt)
-            return result
         }
+        sqlite3_finalize(stmt)
+        return result
+    }
     
     // MARK: - ⌨️ 鍵盤候選字搜尋
     func searchByPhonetic(_ bopomofo: String) -> [String] {
@@ -160,21 +189,30 @@ class DatabaseManager {
     
     /// 切換收藏狀態：若已收藏則刪除，若未收藏則加入 (若滿 30 筆則刪除最舊的)
     func toggleFavorite(word: String) -> Bool {
-        guard let db = db else { return false }
+        guard let db = db else {
+            print("❌ DB Error: 資料庫未連接")
+            return false
+        }
         
         if isFavorite(word: word) {
             // --- 情況 A：已收藏，執行刪除 ---
+            print("🗑️ 正在從收藏移除: \(word)")
             let deleteSQL = "DELETE FROM favorites WHERE word = ?;"
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, deleteSQL, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (word as NSString).utf8String, -1, nil)
-                sqlite3_step(stmt)
+                if sqlite3_step(stmt) == SQLITE_DONE {
+                    print("✅ 移除成功")
+                } else {
+                    print("❌ 移除失敗 SQL Error")
+                }
             }
             sqlite3_finalize(stmt)
             return false // 回傳 false 代表現在「未收藏」
             
         } else {
             // --- 情況 B：未收藏，準備加入 ---
+            print("❤️ 準備加入收藏: \(word)")
             
             // 1. 檢查目前數量
             var currentCount = 0
@@ -186,12 +224,18 @@ class DatabaseManager {
                 }
             }
             sqlite3_finalize(countStmt)
+            print("📊 目前收藏數量: \(currentCount)")
             
             // 2. 如果達到上限，刪除「最舊」的一筆
             // 這裡使用 SQLite 的 rowid 來判斷，rowid 最小的代表最早插入
             if currentCount >= maxFavoritesCount {
+                print("⚠️ 達到收藏上限 (\(maxFavoritesCount))，正在刪除最舊的一筆...")
                 let deleteOldestSQL = "DELETE FROM favorites WHERE rowid = (SELECT min(rowid) FROM favorites);"
-                sqlite3_exec(db, deleteOldestSQL, nil, nil, nil)
+                if sqlite3_exec(db, deleteOldestSQL, nil, nil, nil) == SQLITE_OK {
+                     print("✅ 舊資料刪除成功")
+                } else {
+                     print("❌ 舊資料刪除失敗")
+                }
             }
             
             // 3. 插入新收藏
@@ -199,7 +243,14 @@ class DatabaseManager {
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (word as NSString).utf8String, -1, nil)
-                sqlite3_step(stmt)
+                if sqlite3_step(stmt) == SQLITE_DONE {
+                    print("✅ 加入收藏成功: \(word)")
+                } else {
+                    print("❌ 加入失敗 (可能是 SQL 錯誤或約束衝突): \(word)")
+                    if let errorPointer = sqlite3_errmsg(db) {
+                        print("   SQLite Error: \(String(cString: errorPointer))")
+                    }
+                }
             }
             sqlite3_finalize(stmt)
             
@@ -222,7 +273,7 @@ class DatabaseManager {
         return count > 0
     }
     
-    // [Added] 取得所有收藏列表 (UI 需要此函式)
+    // 取得所有收藏列表 (UI 需要此函式)
     func getFavorites() -> [DictItem] {
         var result: [DictItem] = []
         guard let db = db else { return [] }

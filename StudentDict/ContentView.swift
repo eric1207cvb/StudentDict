@@ -240,23 +240,27 @@ struct ContentView: View {
                         }
                     }
                     .navigationTitle("國語辭典簡編本")
-                    .navigationBarTitleDisplayMode(.large)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button(action: { showLicense = true }) { Image(systemName: "info.circle") }
-                        }
-                    }
-                    .sheet(isPresented: $showLicense) { LicenseView() }
-                    .onChange(of: speechInput.transcribedText) { _, newValue in
-                        if !newValue.isEmpty { self.searchText = newValue; performSearch(keyword: newValue) }
-                    }
-                    .onChange(of: searchText) { _, newValue in performSearch(keyword: newValue) }
-                    .onAppear {
-                        loadData()
-                    }
-                }
-            }
-        }
+                                        .navigationBarTitleDisplayMode(.large)
+                                        .toolbar {
+                                            ToolbarItem(placement: .navigationBarTrailing) {
+                                                Button(action: { showLicense = true }) { Image(systemName: "info.circle") }
+                                            }
+                                        }
+                                        .sheet(isPresented: $showLicense) { LicenseView() }
+                                        // [新增修復] 當分頁切換時(例如切換到收藏頁)，重新讀取資料
+                                        .onChange(of: selectedTab) { _ in
+                                            loadData()
+                                        }
+                                        .onChange(of: speechInput.transcribedText) { _, newValue in
+                                            if !newValue.isEmpty { self.searchText = newValue; performSearch(keyword: newValue) }
+                                        }
+                                        .onChange(of: searchText) { _, newValue in performSearch(keyword: newValue) }
+                                        .onAppear {
+                                            loadData()
+                                        }
+                                    }
+                                }
+                            }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { withAnimation { isLoading = false } }
         }
