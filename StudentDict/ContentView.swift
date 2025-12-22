@@ -1,6 +1,8 @@
 import SwiftUI
 import Speech
 import AVFoundation
+import GoogleMobileAds // AdMob
+import RevenueCat      // RevenueCat
 
 // ==========================================
 // MARK: - 1. 工具與設定 (Utils)
@@ -16,13 +18,11 @@ struct AppTheme {
         return colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.05)
     }
     
-    // 字型管理器：確認使用 "TW-MOE-Std-Kai"
     static func moeKaiFont(size: CGFloat) -> Font {
         let fontName = "TW-MOE-Std-Kai"
         if UIFont(name: fontName, size: size) != nil {
             return Font.custom(fontName, size: size)
         }
-        print("⚠️ Warning: 找不到 \(fontName)，使用系統 Serif")
         return Font.system(size: size, weight: .regular, design: .serif)
     }
 }
@@ -118,7 +118,7 @@ struct ZhuyinIME {
 }
 
 // ==========================================
-// MARK: - 2. 主視圖 (Main View)
+// MARK: - 2. 主視圖 (Main View) - 乾淨版面
 // ==========================================
 
 struct ContentView: View {
@@ -136,6 +136,13 @@ struct ContentView: View {
     @State private var showCustomKeyboard = true
     @State private var isLoading = true
     @StateObject private var speechInput = SpeechInputManager()
+    
+    // [RevenueCat 直接購買變數]
+    @StateObject private var purchaseManager = PurchaseManager.shared // 監聽付費狀態
+    @State private var isPurchasing = false // 是否正在處理購買中
+    @State private var alertMessage = ""
+    @State private var showAlert = false
+    
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
@@ -170,7 +177,7 @@ struct ContentView: View {
                                             Image(systemName: "delete.left.fill").foregroundColor(.gray).font(.title3).padding(.leading, 4)
                                         }
                                     }
-                                    Divider().frame(height: 20).padding(.horizontal, 4)
+                                    
                                     Button(action: {
                                         speechInput.toggleRecording()
                                         if speechInput.isRecording { showCustomKeyboard = false }
@@ -188,7 +195,7 @@ struct ContentView: View {
                                 .padding(12).background(AppTheme.cardBackground).cornerRadius(12)
                                 .shadow(color: AppTheme.shadowColor(colorScheme: colorScheme), radius: 5)
                                 
-                                // 2. 分頁切換器 (只有在沒有搜尋文字時顯示)
+                                // 2. 分頁切換器
                                 if searchText.isEmpty {
                                     Picker("Tab", selection: $selectedTab) {
                                         Text("最近查詢").tag(0)
@@ -206,13 +213,10 @@ struct ContentView: View {
                             // --- 內容顯示區 ---
                             ZStack {
                                 if !searchText.isEmpty {
-                                    // 模式 A: 搜尋結果
                                     if results.isEmpty { VStack { Spacer(); Text("搜尋中 / 查無結果").foregroundColor(.gray); Spacer() } }
                                     else { ResultListView(items: results) }
                                 } else {
-                                    // 模式 B: 歷史或收藏
                                     if selectedTab == 0 {
-                                        // 顯示歷史
                                         if historyItems.isEmpty { EmptyStateView(title: "尚無查詢紀錄") }
                                         else {
                                             HistoryListView(items: historyItems, onClear: {
@@ -220,11 +224,10 @@ struct ContentView: View {
                                             })
                                         }
                                     } else {
-                                        // 顯示收藏
                                         if favoriteItems.isEmpty { EmptyStateView(title: "尚無收藏單字", icon: "heart.slash") }
                                         else {
                                             FavoritesListView(items: favoriteItems) {
-                                                loadData() // 刷新資料
+                                                loadData()
                                             }
                                         }
                                     }
@@ -232,7 +235,21 @@ struct ContentView: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             
-                            // 鍵盤區
+                            // --- [AdMob] 廣告橫幅區域 ---
+                            // 當使用者「不是」Premium 會員時，才顯示廣告
+                            // --- [AdMob] 廣告橫幅區域 ---
+                            // 當使用者「不是」Premium 會員時，才顯示廣告
+                            // --- [AdMob] 廣告橫幅區域 ---
+                            if !purchaseManager.isPremium {
+                                AdBannerView()
+                                    // [修改] 自動判斷：iPad 給 90 高度，iPhone 給 60
+                                    .frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 90 : 60)
+                                    .frame(maxWidth: .infinity)
+                                    .background(Color(.systemBackground))
+                                    .padding(.bottom, 5)
+                            }
+                            
+                            // --- 自訂鍵盤區 ---
                             if showCustomKeyboard {
                                 ZhuyinKeyboardView(text: $searchText, onUpdate: { performSearch(keyword: searchText) })
                                     .frame(height: 400).transition(.move(edge: .bottom)).zIndex(1)
@@ -240,29 +257,104 @@ struct ContentView: View {
                         }
                     }
                     .navigationTitle("國語辭典簡編本")
-                                        .navigationBarTitleDisplayMode(.large)
-                                        .toolbar {
-                                            ToolbarItem(placement: .navigationBarTrailing) {
-                                                Button(action: { showLicense = true }) { Image(systemName: "info.circle") }
-                                            }
-                                        }
-                                        .sheet(isPresented: $showLicense) { LicenseView() }
-                                        // [新增修復] 當分頁切換時(例如切換到收藏頁)，重新讀取資料
-                                        .onChange(of: selectedTab) { _ in
-                                            loadData()
-                                        }
-                                        .onChange(of: speechInput.transcribedText) { _, newValue in
-                                            if !newValue.isEmpty { self.searchText = newValue; performSearch(keyword: newValue) }
-                                        }
-                                        .onChange(of: searchText) { _, newValue in performSearch(keyword: newValue) }
-                                        .onAppear {
-                                            loadData()
-                                        }
+                    .navigationBarTitleDisplayMode(.inline) // 改成 inline 避免標題太巨大
+                    .toolbar {
+                        // 1. 左側：保持空白，讓標題完美置中，不擋路
+                        
+                        // 2. 右側：功能選單
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Menu {
+                                // [第一順位] 移除廣告/贊助 (只有未付費時顯示)
+                                if !purchaseManager.isPremium {
+                                    Button(action: {
+                                        startDirectPurchase()
+                                    }) {
+                                        // 這裡換成了愛心圖示 ❤️
+                                        Label("移除廣告 (NT$60)", systemImage: "heart.fill")
                                     }
                                 }
+                                
+                                // [第二順位] 恢復購買
+                                Button(action: {
+                                    restorePurchases()
+                                }) {
+                                    Label("恢復購買", systemImage: "arrow.clockwise")
+                                }
+                                
+                                // [最後順位] 關於本程式 (移到最下面了)
+                                Button(action: { showLicense = true }) {
+                                    Label("關於本程式", systemImage: "info.circle")
+                                }
+                            } label: {
+                                // 選單入口按鈕
+                                Image(systemName: "ellipsis.circle")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.primary)
                             }
+                        }
+                    }
+                    .sheet(isPresented: $showLicense) { LicenseView() }
+                    
+                    .onChange(of: selectedTab) { _ in loadData() }
+                    .onChange(of: speechInput.transcribedText) { _, newValue in
+                        if !newValue.isEmpty { self.searchText = newValue; performSearch(keyword: newValue) }
+                    }
+                    .onChange(of: searchText) { _, newValue in performSearch(keyword: newValue) }
+                    .onAppear { loadData() }
+                    
+                    // 購買/恢復結果的彈窗
+                    .alert(isPresented: $showAlert) {
+                        Alert(title: Text("提示"), message: Text(alertMessage), dismissButton: .default(Text("好")))
+                    }
+                } // End NavigationView
+            }
+        }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { withAnimation { isLoading = false } }
+        }
+    }
+    
+    // MARK: - 購買邏輯
+    func startDirectPurchase() {
+        isPurchasing = true
+        // 1. 抓取商品 Offering
+        Purchases.shared.getOfferings { offerings, error in
+            if let package = offerings?.current?.availablePackages.first {
+                // 2. 喚起 Apple 原生支付
+                Purchases.shared.purchase(package: package) { transaction, customerInfo, error, userCancelled in
+                    isPurchasing = false
+                    
+                    if let error = error {
+                        if !userCancelled {
+                            alertMessage = "購買發生錯誤：\(error.localizedDescription)"
+                            showAlert = true
+                        }
+                    } else if customerInfo?.entitlements["premium"]?.isActive == true {
+                        purchaseManager.isPremium = true
+                        alertMessage = "購買成功！廣告已移除。"
+                        showAlert = true
+                    }
+                }
+            } else {
+                isPurchasing = false
+                alertMessage = "無法連接到商店，請檢查網路連線或稍後再試。"
+                showAlert = true
+            }
+        }
+    }
+    
+    // MARK: - 恢復購買邏輯
+    func restorePurchases() {
+        isPurchasing = true
+        Purchases.shared.restorePurchases { customerInfo, error in
+            isPurchasing = false
+            if let info = customerInfo, info.entitlements["premium"]?.isActive == true {
+                purchaseManager.isPremium = true
+                alertMessage = "已成功恢復您的購買權益！"
+            } else {
+                alertMessage = "查無此帳號的購買紀錄。"
+            }
+            showAlert = true
         }
     }
     
@@ -272,7 +364,6 @@ struct ContentView: View {
     
     func loadData() {
         historyItems = DatabaseManager.shared.getHistory()
-        // 需確認 DatabaseManager 已加入 getFavorites()
         favoriteItems = DatabaseManager.shared.getFavorites()
     }
 }
@@ -280,7 +371,7 @@ struct ContentView: View {
 // ==========================================
 // MARK: - 3. 詳情視圖 (Detail View)
 // ==========================================
-
+// (維持不變)
 struct DetailView: View {
     let item: DictItem
     @State private var isFav: Bool = false
@@ -293,14 +384,12 @@ struct DetailView: View {
             AppTheme.background.ignoresSafeArea()
             ScrollView {
                 VStack(spacing: 20) {
-                    // --- 頂部大字卡 ---
                     VStack(spacing: 0) {
                         if isSingleChar {
                             HStack(alignment: .top, spacing: 20) {
                                 MiZiGeView(char: item.word)
                                     .frame(width: 140, height: 140)
                                     .shadow(radius: 2)
-                                
                                 VStack(alignment: .leading, spacing: 14) {
                                     Text(item.phonetic)
                                         .font(.system(size: 24, weight: .heavy))
@@ -308,9 +397,7 @@ struct DetailView: View {
                                         .padding(.vertical, 6).padding(.horizontal, 16)
                                         .background(Capsule().fill(Color.orange))
                                         .shadow(color: .orange.opacity(0.3), radius: 3, x: 0, y: 2)
-                                    
                                     Divider()
-                                    
                                     VStack(alignment: .leading, spacing: 8) {
                                         InfoLabel(title: "部首", value: item.radical.isEmpty ? "-" : item.radical, icon: "book.closed")
                                         InfoLabel(title: "筆畫", value: "\(item.strokeCount) 畫", icon: "pencil")
@@ -326,7 +413,6 @@ struct DetailView: View {
                     .padding(24).background(AppTheme.cardBackground).cornerRadius(24)
                     .shadow(color: AppTheme.shadowColor(colorScheme: colorScheme), radius: 8, x: 0, y: 4)
                     
-                    // --- 功能按鈕 ---
                     HStack(spacing: 20) {
                         ActionButton(icon: "speaker.wave.3.fill", text: "唸發音", color: .blue) {
                             SpeechManager.shared.speak(item.word)
@@ -337,7 +423,6 @@ struct DetailView: View {
                         }
                     }
                     
-                    // --- 釋義區 ---
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "text.book.closed.fill").foregroundColor(.green)
@@ -370,8 +455,7 @@ struct DetailView: View {
 // ==========================================
 // MARK: - 4. UI 元件 (Components)
 // ==========================================
-
-// [New Feature] 收藏列表元件
+// (維持不變)
 struct FavoritesListView: View {
     let items: [DictItem]
     let onRefresh: () -> Void
@@ -525,7 +609,6 @@ struct WordCardView: View {
     }
 }
 
-// 迷你詞彙 (智慧縮放版：自動縮小以顯示完整內容)
 struct MiniIdiomView: View {
     let word: String; let phonetic: String
     @Environment(\.colorScheme) var colorScheme
@@ -534,26 +617,19 @@ struct MiniIdiomView: View {
         let chars = Array(word)
         let phonetics = BopomofoSplitter.split(phonetic: phonetic, count: chars.count)
         
-        // --- 智慧縮放邏輯 ---
-        // 假設卡片最大可用寬度約為 220 點
-        // 如果字數多，就讓每個字的寬度變小；如果字數少，維持最大寬度 34
-        // max(20, ...) 確保字再多也不會縮到小於 20，避免看不見
         let availableWidth: CGFloat = 220
         let calculatedWidth = availableWidth / CGFloat(max(1, chars.count))
-        let itemSize = min(34, max(20, calculatedWidth)) // 限制在 20 ~ 34 之間
-        
-        // 字體大小跟著框框大小連動 (約為框框的 0.7 倍)
+        let itemSize = min(34, max(20, calculatedWidth))
         let fontSize = itemSize * 0.7
         
-        HStack(spacing: 2) { // 間距也稍微縮小
+        HStack(spacing: 2) {
             ForEach(0..<chars.count, id: \.self) { index in
                 VStack(spacing: 0) {
                     Text(String(chars[index]))
                         .font(AppTheme.moeKaiFont(size: fontSize))
                         .foregroundColor(AppTheme.primary)
-                        .frame(height: itemSize) // 確保高度跟隨縮放
+                        .frame(height: itemSize)
                     
-                    // 注音字體也稍微縮放，但設有最小值以免糊掉
                     Text(index < phonetics.count ? phonetics[index] : "")
                         .font(.system(size: max(9, fontSize * 0.45), weight: .medium))
                         .foregroundColor(AppTheme.secondary)
@@ -608,7 +684,6 @@ struct ExpandedCandidatePanel: View {
     }
 }
 
-// 注音鍵盤元件 (已增強兒童震動回饋感)
 struct ZhuyinKeyboardView: View {
     @Binding var text: String
     var onUpdate: () -> Void
@@ -630,7 +705,6 @@ struct ZhuyinKeyboardView: View {
         ZStack {
             (colorScheme == .dark ? Color(UIColor.systemGray6) : Color(UIColor.systemGray6)).ignoresSafeArea()
             VStack(spacing: 8) {
-                // 顯示板
                 ZStack {
                     RoundedRectangle(cornerRadius: 12).fill(AppTheme.cardBackground)
                         .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 2)
@@ -659,7 +733,6 @@ struct ZhuyinKeyboardView: View {
                                 if candidates.count > 15 {
                                     Button(action: {
                                         withAnimation(.spring()) { showExpandedCandidates = true }
-                                        // [修改] 展開更多：使用中等震動
                                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                     }) {
                                         VStack(spacing: 2) {
@@ -676,13 +749,11 @@ struct ZhuyinKeyboardView: View {
                 }
                 .frame(height: 60).padding(.horizontal, 8).padding(.top, 8)
                 
-                // 聲調與功能列
                 HStack(spacing: 6) {
                     ForEach(toneItems, id: \.symbol) { item in
                         Button(action: {
                             if item.symbol != "ˉ" { text += item.symbol }
                             onUpdate()
-                            // [修改] 聲調按鍵：改成 .rigid (清脆堅硬感)，區分普通按鍵
                             UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                         }) {
                             VStack(spacing: 0) {
@@ -696,7 +767,6 @@ struct ZhuyinKeyboardView: View {
                     }
                     Button(action: {
                         if !text.isEmpty { text.removeLast(); onUpdate() }
-                        // [維持] 刪除按鍵：維持 .heavy (重擊感)，明確知道刪掉了
                         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                     }) {
                         Image(systemName: "delete.left.fill").font(.system(size: 22)).foregroundColor(.white)
@@ -705,13 +775,11 @@ struct ZhuyinKeyboardView: View {
                 }
                 .padding(.horizontal, 8)
                 
-                // 注音區
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(gridBopomofo, id: \.self) { char in
                         Button(action: {
                             text += char
                             onUpdate()
-                            // [修改] 一般注音按鍵：改成 .medium (中等扎實感)，確認感更強
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         }) {
                             Text(char).font(.system(size: 20, weight: .semibold)).foregroundColor(getTextColor(for: char))
@@ -728,7 +796,7 @@ struct ZhuyinKeyboardView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity)).zIndex(100)
             }
         }
-        .frame(height: 400).shadow(radius: -2)
+        .frame(height: 400)
         .onChange(of: text) { _, _ in updateCandidates() }
         .onAppear { updateCandidates() }
     }
@@ -743,7 +811,6 @@ struct ZhuyinKeyboardView: View {
         text += char
         onUpdate()
         withAnimation { showExpandedCandidates = false }
-        // [修改] 選字確認：改成 .rigid (清脆堅硬感)，給予完成任務的肯定
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
     private func getTextColor(for char: String) -> Color {
@@ -817,7 +884,6 @@ struct LaunchScreenView: View {
 struct LicenseView: View {
     @Environment(\.presentationMode) var presentationMode
     
-    // 定義連結 (請確保這些網址是正確的)
     let privacyURL = URL(string: "https://eric1207cvb.github.io/StudentDict/")!
     let eulaURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
     let moeURL = URL(string: "https://dict.concised.moe.edu.tw/")!
@@ -826,12 +892,9 @@ struct LicenseView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    
-                    // 1. 開發者區塊
                     VStack(alignment: .leading, spacing: 8) {
                         Text("App 設計與開發").font(.headline)
                         HStack(spacing: 16) {
-                            // 請確認 Assets 中有 "DeveloperAvatar" 這張圖片
                             Image("DeveloperAvatar")
                                 .resizable().scaledToFill()
                                 .frame(width: 60, height: 60)
@@ -849,7 +912,6 @@ struct LicenseView: View {
                     
                     Divider()
                     
-                    // 2. 法律與條款區塊
                     VStack(alignment: .leading, spacing: 12) {
                         Text("法律與條款").font(.headline)
                         Link(destination: privacyURL) {
@@ -872,7 +934,6 @@ struct LicenseView: View {
                     
                     Divider()
                     
-                    // 3. 資料來源授權區塊
                     VStack(alignment: .leading, spacing: 12) {
                         Text("資料來源授權").font(.headline)
                         Text("本應用程式使用之資料來源為中華民國教育部《國語辭典簡編本》。").font(.body)
@@ -894,10 +955,7 @@ struct LicenseView: View {
                             }
                         }
                     }
-                    
                     Spacer(minLength: 20)
-                    
-                    // 4. 底部免責聲明
                     Text("本應用程式為第三方開發，非教育部官方 App。\n僅提供查詢介面，未對原始資料內容進行任何改作。")
                         .font(.caption).foregroundColor(.gray).multilineTextAlignment(.center).frame(maxWidth: .infinity)
                 }
@@ -964,6 +1022,29 @@ extension View {
     func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View { clipShape(RoundedCorner(radius: radius, corners: corners)) }
 }
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View { ContentView() }
+// ==========================================
+// MARK: - 5. 新增 AdMob Banner 元件 (v11 新語法修正版)
+// ==========================================
+
+struct AdBannerView: UIViewRepresentable {
+    
+    func makeUIView(context: Context) -> BannerView {
+        // [修改] 自動判斷：iPad 用 Leaderboard (728x90)，iPhone 用 Banner (320x50)
+        let adSize = UIDevice.current.userInterfaceIdiom == .pad ? AdSizeLeaderboard : AdSizeBanner
+        
+        let banner = BannerView(adSize: adSize)
+        
+        // 您的正式廣告單元 ID
+        banner.adUnitID = "ca-app-pub-8563333250584395/7527216704"
+        
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootVC = windowScene.windows.first?.rootViewController {
+            banner.rootViewController = rootVC
+        }
+        
+        banner.load(Request())
+        return banner
+    }
+
+    func updateUIView(_ uiView: BannerView, context: Context) {}
 }
