@@ -19,7 +19,7 @@ struct StudentDictApp: App {
         
         // 設定測試裝置 ID (請填入您在 Console 看到的 ID)
         // 例如： ["2077ef9a63d2b398840261c8221a0c9b"]
-        adsConfig.testDeviceIdentifiers = ["ca-app-pub-8563333250584395/7527216704ｓ"]
+        adsConfig.testDeviceIdentifiers = ["ca-app-pub-8563333250584395/7527216704"]
         
         // [修正] 啟動廣告
         MobileAds.shared.start(completionHandler: nil)
