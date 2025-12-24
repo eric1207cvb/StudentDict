@@ -1,34 +1,20 @@
 import SwiftUI
-import GoogleMobileAds // AdMob
-import RevenueCat      // RevenueCat
+import GoogleMobileAds
+import RevenueCat
 
 @main
 struct StudentDictApp: App {
-    
     init() {
-        // ==========================================
-        // 1. Google AdMob 設定
-        // ==========================================
-        
-        // [修正] 使用 MobileAds.shared (這是新版 SDK 的 Swift 標準寫法)
-        let adsConfig = MobileAds.shared.requestConfiguration
-        
-        // 保護兒童隱私設定
-        adsConfig.tagForChildDirectedTreatment = true
-        adsConfig.tagForUnderAgeOfConsent = true
-        
-        // 設定測試裝置 ID (請填入您在 Console 看到的 ID)
-        // 例如： ["2077ef9a63d2b398840261c8221a0c9b"]
-        adsConfig.testDeviceIdentifiers = ["ca-app-pub-8563333250584395/7527216704"]
-        
-        // [修正] 啟動廣告
-        MobileAds.shared.start(completionHandler: nil)
-        
-        // ==========================================
-        // 2. RevenueCat 設定 (內購功能)
-        // ==========================================
+        // 1. RevenueCat 設定 (處理買斷廣告內購)
         Purchases.logLevel = .debug
         Purchases.configure(withAPIKey: "appl_LpAgOPSlVbDmfUlhZkmhOBlWtTb")
+        
+        // 2. AdMob 設定與兒童隱私合規 (解決 Guideline 5.1.2)
+        let adsConfig = MobileAds.shared.requestConfiguration
+        adsConfig.tagForChildDirectedTreatment = true // 標示為面向兒童
+        adsConfig.tagForUnderAgeOfConsent = true
+        
+        MobileAds.shared.start(completionHandler: nil)
     }
     
     var body: some Scene {
