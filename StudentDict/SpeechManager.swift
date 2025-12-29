@@ -1,8 +1,8 @@
 import AVFoundation
 import UIKit
-import Combine  // [Fix] 必須加入這個框架，才能使用 @Published 和 ObservableObject
+import Combine
 
-// [Fix] 加入 @MainActor，確保 UI 更新都在主執行緒，並解決 Sendable 警告
+// [Fix] 加入 @MainActor，確保 UI 更新都在主執行緒
 @MainActor
 class SpeechManager: NSObject, AVSpeechSynthesizerDelegate, ObservableObject {
     static let shared = SpeechManager()
@@ -14,42 +14,46 @@ class SpeechManager: NSObject, AVSpeechSynthesizerDelegate, ObservableObject {
     override init() {
         super.init()
         synthesizer.delegate = self
-        setupAudioSession()
-    }
-    
-    /// 設定音訊工作階段 (確保聲音夠大，且不會被靜音鍵切掉)
-    private func setupAudioSession() {
-        do {
-            // .playback 模式可確保在靜音模式下也能發聲
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: .duckOthers)
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            print("⚠️ AudioSession 設定失敗: \(error)")
-        }
     }
     
     /// 朗讀文字
     /// - Parameter text: 要朗讀的文字
-    /// - Parameter rate: 語速 (0.0 ~ 1.0)，預設 0.45 (適合教學的稍慢速度)
+    /// - Parameter rate: 語速 (0.0 ~ 1.0)，預設 0.45
     func speak(_ text: String, rate: Float = 0.45) {
         // 1. 如果正在講話，先停止
         stop()
         
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            // [關鍵修正]
+            // 步驟 A: 先解除目前的 Session (這會釋放麥克風鎖定)
+            try? audioSession.setActive(false)
+            
+            // 步驟 B: 設定為 "純播放模式" (.playback)
+            // 這裡不需要 overrideOutputAudioPort(.speaker)，因為 .playback 預設就是喇叭
+            // 如果加了 override... 會導致 Error -50 錯誤
+            try audioSession.setCategory(.playback, mode: .default, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+            
+            // 步驟 C: 啟用 Session
+            try audioSession.setActive(true)
+        } catch {
+            print("⚠️ 發音前置設定失敗: \(error.localizedDescription)")
+        }
+        
         // 2. 建立發聲物件
         let utterance = AVSpeechUtterance(string: text)
         
-        // 3. [關鍵優化] 強制尋找「台灣 (zh-TW)」的高品質語音
+        // 3. 尋找最佳台灣語音
         if let voice = findBestChineseVoice() {
             utterance.voice = voice
         } else {
-            // 回退方案
             utterance.voice = AVSpeechSynthesisVoice(language: "zh-TW")
         }
         
-        // 4. 設定語速與音調
+        // 4. 設定參數
         utterance.rate = rate
-        utterance.pitchMultiplier = 1.0 // 正常音高
-        utterance.volume = 1.0
+        utterance.pitchMultiplier = 1.0
+        utterance.volume = 1.0 // 確保最大音量
         
         // 5. 開始朗讀
         synthesizer.speak(utterance)
@@ -62,43 +66,26 @@ class SpeechManager: NSObject, AVSpeechSynthesizerDelegate, ObservableObject {
         }
     }
     
-    // MARK: - [關鍵優化] 尋找最佳的台灣語音
+    // MARK: - 尋找最佳的台灣語音
     private func findBestChineseVoice() -> AVSpeechSynthesisVoice? {
-        // 取得所有支援 zh-TW 的語音
         let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "zh-TW" }
-        
-        // 優先順序 1: Premium (iOS 16+ 高品質 Siri 語音，最自然)
-        if let premiumVoice = voices.first(where: { $0.quality == .premium }) {
-            return premiumVoice
-        }
-        
-        // 優先順序 2: Enhanced (增強版語音)
-        if let enhancedVoice = voices.first(where: { $0.quality == .enhanced }) {
-            return enhancedVoice
-        }
-        
-        // 優先順序 3: Default (標準語音，通常是 Mei-Jia)
+        // 優先順序: Premium -> Enhanced -> Default
+        if let premium = voices.first(where: { $0.quality == .premium }) { return premium }
+        if let enhanced = voices.first(where: { $0.quality == .enhanced }) { return enhanced }
         return voices.first
     }
     
     // MARK: - AVSpeechSynthesizerDelegate
-    // 因為類別已經標記 @MainActor，這裡不需要再包 DispatchQueue.main.async
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            self.isSpeaking = true
-        }
+        Task { @MainActor in self.isSpeaking = true }
     }
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            self.isSpeaking = false
-        }
+        Task { @MainActor in self.isSpeaking = false }
     }
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            self.isSpeaking = false
-        }
+        Task { @MainActor in self.isSpeaking = false }
     }
 }

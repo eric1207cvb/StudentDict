@@ -442,6 +442,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "App 需要使用麥克風來讓您進行語音搜尋。";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "App 需要語音辨識功能將您的聲音轉為文字。";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "我們需要此權限以提供個人化的廣告內容，支持我們持續開發。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -465,7 +466,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -485,6 +486,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "App 需要使用麥克風來讓您進行語音搜尋。";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "App 需要語音辨識功能將您的聲音轉為文字。";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "我們需要此權限以提供個人化的廣告內容，支持我們持續開發。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -508,7 +510,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
