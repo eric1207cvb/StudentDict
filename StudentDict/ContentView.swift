@@ -211,6 +211,8 @@ struct ContentView: View {
                                         
                                         SimulatedTextField(text: searchText, placeholder: "輸入單字或按麥克風")
                                             .onTapGesture { withAnimation(.spring()) { showCustomKeyboard = true } }
+                                            // [Version Update]: iPad 高度優化
+                                            .frame(height: isPad ? 50 : 36)
                                         
                                         if !searchText.isEmpty {
                                             Button(action: { searchText = ""; results = [] }) {
@@ -302,22 +304,20 @@ struct ContentView: View {
                                     AdBannerView()
                                         .frame(height: isPad ? 90 : 60)
                                         .frame(maxWidth: .infinity)
-                                        .background(Color(.secondarySystemBackground))
+                                        .background(Color(UIColor.systemGray6)) // [Version Update]: 統一背景色
                                 }
                                 
                                 if showCustomKeyboard {
-                                                                    ZhuyinKeyboardView(text: $searchText, onUpdate: { performSearch(keyword: searchText) })
-                                                                        // [關鍵修正]:
-                                                                        // iPad: 改為 400 (解決上下裁切，且不會擋住搜尋列)
-                                                                        // iPhone: 維持 360 (您最滿意的設定，完全不動)
-                                                                        .frame(height: isPad ? 400 : 360)
-                                                                        .frame(maxWidth: isPad ? 640 : .infinity)
-                                                                        .background(Color(UIColor.systemGray6))
-                                                                        .cornerRadius(isPad ? 16 : 0, corners: [.topLeft, .topRight])
-                                                                        .shadow(color: isPad ? .black.opacity(0.1) : .clear, radius: 10, x: 0, y: -5)
-                                                                        .transition(.move(edge: .bottom))
-                                                                        .padding(.bottom, isPad ? 10 : 0)
-                                                                }
+                                    ZhuyinKeyboardView(text: $searchText, onUpdate: { performSearch(keyword: searchText) })
+                                        // [Version Update]: iPad 高度微調至 420，給底部連結更多空間
+                                        .frame(height: isPad ? 420 : 360)
+                                        .frame(maxWidth: isPad ? 640 : .infinity)
+                                        .background(Color(UIColor.systemGray6))
+                                        .cornerRadius(isPad ? 16 : 0, corners: [.topLeft, .topRight])
+                                        .shadow(color: isPad ? .black.opacity(0.1) : .clear, radius: 10, x: 0, y: -5)
+                                        .transition(.move(edge: .bottom))
+                                        .padding(.bottom, isPad ? 10 : 0)
+                                }
                             }
                             .frame(maxWidth: .infinity)
                             .background(Color(UIColor.systemGray6).ignoresSafeArea(edges: .bottom))
@@ -776,7 +776,8 @@ struct SimulatedTextField: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: isPad ? 44 : 30)
+        // [Version Update]: iPad 高度由 44 改為 50，iPhone 由 30 改為 36 (可微調)
+        .frame(height: isPad ? 50 : 30)
         .contentShape(Rectangle())
     }
 }
@@ -953,16 +954,16 @@ struct ZhuyinKeyboardView: View {
         ToneItem(symbol: "˙", name: "輕聲")
     ]
     
-    // [iPad 優化]: 欄位寬度稍微縮小，讓整體更緊湊
+    // [iPad 優化]: 稍微放寬間距
     var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: isPad ? 60 : 36), spacing: isPad ? 6 : 5)]
+        [GridItem(.adaptive(minimum: isPad ? 64 : 36), spacing: isPad ? 8 : 5)]
     }
     
     var body: some View {
         ZStack {
             (colorScheme == .dark ? Color(UIColor.systemGray6) : Color(UIColor.systemGray6)).ignoresSafeArea()
             
-            VStack(spacing: isPad ? 6 : 4) { // [iPad 優化]: 縮小垂直間距 (從 8 改為 6)
+            VStack(spacing: isPad ? 8 : 4) { // [iPad 優化]: 調整垂直間距
                 
                 // 1. 候選字與拼音顯示列
                 ZStack {
@@ -1008,9 +1009,9 @@ struct ZhuyinKeyboardView: View {
                         }
                     }
                 }
-                .frame(height: isPad ? 50 : 50) // [iPad 優化]: 高度限制為 50，避免吃掉上方空間
+                .frame(height: isPad ? 56 : 50) // [iPad 優化]: 候選字列增高
                 .padding(.horizontal, 8)
-                .padding(.top, isPad ? 10 : 12)
+                .padding(.top, isPad ? 12 : 12)
                 
                 // 2. 聲調列
                 HStack(spacing: 6) {
@@ -1024,8 +1025,8 @@ struct ZhuyinKeyboardView: View {
                                 Text(item.symbol).font(.system(size: isPad ? 24 : 20, weight: .bold)).frame(height: isPad ? 26 : 24)
                                 Text(item.name).font(.system(size: isPad ? 11 : 10, weight: .regular)).padding(.bottom, 2)
                             }
-                            // [iPad 優化]: 高度微調至 42，省空間
-                            .foregroundColor(.purple).frame(maxWidth: .infinity).frame(height: isPad ? 42 : 42)
+                            // [iPad 優化]: 聲調按鍵增高
+                            .foregroundColor(.purple).frame(maxWidth: .infinity).frame(height: isPad ? 44 : 42)
                             .background(Color.purple.opacity(0.1)).cornerRadius(8)
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.2), lineWidth: 1))
                         }
@@ -1035,22 +1036,21 @@ struct ZhuyinKeyboardView: View {
                         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                     }) {
                         Image(systemName: "delete.left.fill").font(.system(size: isPad ? 26 : 20)).foregroundColor(.white)
-                            .frame(width: isPad ? 60 : 54, height: isPad ? 42 : 42).background(Color.gray.opacity(0.8)).cornerRadius(8)
+                            .frame(width: isPad ? 60 : 54, height: isPad ? 44 : 42).background(Color.gray.opacity(0.8)).cornerRadius(8)
                     }
                 }
                 .padding(.horizontal, 8)
                 
                 // 3. 注音鍵盤區
-                LazyVGrid(columns: columns, spacing: isPad ? 6 : 6) { // [iPad 優化]: 行距縮小
+                LazyVGrid(columns: columns, spacing: isPad ? 8 : 6) { // [iPad 優化]: 間距
                     ForEach(gridBopomofo, id: \.self) { char in
                         Button(action: {
                             text += char
                             onUpdate()
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         }) {
-                            Text(char).font(.system(size: isPad ? 24 : 20, weight: .semibold)).foregroundColor(getTextColor(for: char))
-                                // [iPad 優化]: 按鍵高度微調至 42，確保 400 高度能裝下
-                                .frame(minWidth: isPad ? 44 : 32, minHeight: isPad ? 42 : 40).frame(maxWidth: .infinity)
+                            Text(char).font(.system(size: isPad ? 26 : 20, weight: .semibold)).foregroundColor(getTextColor(for: char))
+                                .frame(minWidth: isPad ? 48 : 32, minHeight: isPad ? 46 : 40).frame(maxWidth: .infinity)
                                 .background(colorScheme == .dark ? Color.white.opacity(0.15) : Color.white).cornerRadius(6)
                                 .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.1), radius: 1, x: 0, y: 1)
                         }
@@ -1061,7 +1061,7 @@ struct ZhuyinKeyboardView: View {
                 
                 Spacer(minLength: 0)
                 
-                // 4. 隱私權與 EULA (確保不被切掉)
+                // 4. 隱私權與 EULA (避免被 Home Indicator 遮擋)
                 HStack(spacing: 16) {
                     Link("隱私權政策", destination: URL(string: "https://eric1207cvb.github.io/StudentDict/")!)
                     Text("|").foregroundColor(.gray.opacity(0.5))
@@ -1069,9 +1069,9 @@ struct ZhuyinKeyboardView: View {
                 }
                 .font(.caption2)
                 .foregroundColor(.gray)
-                // [iPad 優化]: 增加 Padding，把字頂上來，確保不會被螢幕邊緣切掉
-                .padding(.bottom, isPad ? 20 : 20)
-                .layoutPriority(1) // 確保優先顯示
+                // [Version Update]: iPad 底部增加 Padding 至 40
+                .padding(.bottom, isPad ? 40 : 20)
+                .layoutPriority(1)
             }
             
             if showExpandedCandidates {
@@ -1079,12 +1079,11 @@ struct ZhuyinKeyboardView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity)).zIndex(100)
             }
         }
-        // 这里的 frame 高度由 ContentView 控制，这里只要確保內容不超出即可
         .onChange(of: text) { _, _ in updateCandidates() }
         .onAppear { updateCandidates() }
     }
     
-    // (Helper functions 保持不變)
+    // (Helper functions)
     private func updateCandidates() {
         let new = ZhuyinIME.shared.getCandidates(for: text)
         self.candidates = new
