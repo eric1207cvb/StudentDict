@@ -1108,7 +1108,7 @@ struct AdBannerView: UIViewRepresentable {
     func makeUIView(context: Context) -> BannerView {
         let adSize = UIDevice.current.userInterfaceIdiom == .pad ? AdSizeLeaderboard : AdSizeBanner
         let banner = BannerView(adSize: adSize)
-        banner.adUnitID = "ca-app-pub-8563333250584395/7527216704"
+        banner.adUnitID = "ca-app-pub-8563333250584395/7434801065"
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let rootVC = windowScene.windows.first?.rootViewController {
             banner.rootViewController = rootVC
