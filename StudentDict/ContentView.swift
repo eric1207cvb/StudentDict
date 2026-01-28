@@ -42,14 +42,6 @@ extension View {
     }
 }
 
-struct BopomofoData {
-    static let initials = ["ㄅ", "ㄆ", "ㄇ", "ㄈ", "ㄉ", "ㄊ", "ㄋ", "ㄌ", "ㄍ", "ㄎ", "ㄏ", "ㄐ", "ㄑ", "ㄒ", "ㄓ", "ㄔ", "ㄕ", "ㄖ", "ㄗ", "ㄘ", "ㄙ"]
-    static let medials = ["ㄧ", "ㄨ", "ㄩ"]
-    static let finals = ["ㄚ", "ㄛ", "ㄜ", "ㄝ", "ㄞ", "ㄟ", "ㄠ", "ㄡ", "ㄢ", "ㄣ", "ㄤ", "ㄥ", "ㄦ"]
-    static let tones = ["ˉ", "ˊ", "ˇ", "ˋ", "˙"]
-    static var all: Set<String> { return Set(initials + medials + finals + tones) }
-    static func isBopomofo(_ char: Character) -> Bool { return all.contains(String(char)) }
-}
 
 struct DefinitionItem: Identifiable {
     let id = UUID()
@@ -101,26 +93,20 @@ class DefinitionParser {
     }
 }
 
-class BopomofoSplitter {
-    static func split(phonetic: String, count: Int) -> [String] {
-        let normalized = phonetic.replacingOccurrences(of: "\u{3000}", with: " ")
-        let parts = normalized.components(separatedBy: " ")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if parts.count == count { return parts }
-        if parts.count > count { return Array(parts.prefix(count)) }
-        var safeParts = parts
-        while safeParts.count < count { safeParts.append("") }
-        return safeParts
-    }
-}
 
 struct ZhuyinIME {
     static let shared = ZhuyinIME()
     func getCandidates(for input: String) -> [String] {
         let currentBopomofo = extractLastBopomofo(from: input)
         if currentBopomofo.isEmpty { return [] }
-        return DatabaseManager.shared.searchByPhonetic(currentBopomofo)
+        let committedText = extractCommittedText(from: input)
+        if committedText.isEmpty {
+            let chars = DatabaseManager.shared.searchCharByPhonetic(currentBopomofo)
+            if !chars.isEmpty { return chars }
+            return DatabaseManager.shared.searchByPhonetic(currentBopomofo, prefix: "")
+        }
+        let primary = DatabaseManager.shared.searchByPhonetic(currentBopomofo, prefix: committedText)
+        return primary
     }
     private func extractLastBopomofo(from text: String) -> String {
         var result = ""
@@ -129,6 +115,18 @@ struct ZhuyinIME {
             else { break }
         }
         return result
+    }
+    private func extractCommittedText(from text: String) -> String {
+        var endIndex = text.endIndex
+        while endIndex > text.startIndex {
+            let prevIndex = text.index(before: endIndex)
+            if BopomofoData.isBopomofo(text[prevIndex]) {
+                endIndex = prevIndex
+            } else {
+                break
+            }
+        }
+        return String(text[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -175,7 +173,7 @@ struct ContentView: View {
                             // --- [A] 頂部區域 (Header) ---
                             VStack(spacing: 0) {
                                 HStack {
-                                    Text("國語辭典簡編本")
+                                    Text("成語典")
                                         .font(isPad ? .system(size: 26, weight: .bold) : .headline)
                                         .foregroundColor(.primary)
                                     Spacer()
@@ -209,7 +207,7 @@ struct ContentView: View {
                                             .foregroundColor(.gray)
                                             .font(isPad ? .title2 : .body)
                                         
-                                        SimulatedTextField(text: searchText, placeholder: "輸入單字或按麥克風")
+                                        SimulatedTextField(text: searchText, placeholder: "輸入成語或按麥克風")
                                             .onTapGesture { withAnimation(.spring()) { showCustomKeyboard = true } }
                                             // [Version Update]: iPad 高度優化
                                             .frame(height: isPad ? 50 : 36)
@@ -288,7 +286,7 @@ struct ContentView: View {
                                             })
                                         }
                                     } else {
-                                        if favoriteItems.isEmpty { EmptyStateView(title: "尚無收藏單字", icon: "heart.slash") }
+                                        if favoriteItems.isEmpty { EmptyStateView(title: "尚無收藏成語", icon: "heart.slash") }
                                         else {
                                             FavoritesListView(items: favoriteItems) { loadData() }
                                         }
@@ -352,22 +350,30 @@ struct ContentView: View {
         Purchases.shared.getOfferings { offerings, error in
             if let package = offerings?.current?.availablePackages.first {
                 Purchases.shared.purchase(package: package) { transaction, customerInfo, error, userCancelled in
-                    isPurchasing = false
+                    DispatchQueue.main.async { isPurchasing = false }
                     if let error = error {
                         if !userCancelled {
-                            alertMessage = "購買發生錯誤：\(error.localizedDescription)"
-                            showAlert = true
+                            DispatchQueue.main.async {
+                                alertMessage = "購買發生錯誤：\(error.localizedDescription)"
+                                showAlert = true
+                            }
                         }
                     } else if customerInfo?.entitlements["premium"]?.isActive == true {
-                        purchaseManager.isPremium = true
-                        alertMessage = "購買成功！廣告已移除。"
-                        showAlert = true
+                        DispatchQueue.main.async {
+                            purchaseManager.updatePremiumStatus(with: customerInfo)
+                            alertMessage = "購買成功！廣告已移除。"
+                            showAlert = true
+                        }
+                    } else {
+                        purchaseManager.updatePremiumStatus(with: customerInfo)
                     }
                 }
             } else {
-                isPurchasing = false
-                alertMessage = "無法連接到商店，請檢查網路連線或稍後再試。"
-                showAlert = true
+                DispatchQueue.main.async {
+                    isPurchasing = false
+                    alertMessage = "無法連接到商店，請檢查網路連線或稍後再試。"
+                    showAlert = true
+                }
             }
         }
     }
@@ -375,14 +381,17 @@ struct ContentView: View {
     func restorePurchases() {
         isPurchasing = true
         Purchases.shared.restorePurchases { customerInfo, error in
-            isPurchasing = false
-            if let info = customerInfo, info.entitlements["premium"]?.isActive == true {
-                purchaseManager.isPremium = true
-                alertMessage = "已成功恢復您的購買權益！"
-            } else {
-                alertMessage = "查無此帳號的購買紀錄。"
+            DispatchQueue.main.async {
+                isPurchasing = false
+                if let info = customerInfo, info.entitlements["premium"]?.isActive == true {
+                    purchaseManager.updatePremiumStatus(with: customerInfo)
+                    alertMessage = "已成功恢復您的購買權益！"
+                } else {
+                    purchaseManager.updatePremiumStatus(with: customerInfo)
+                    alertMessage = "查無此帳號的購買紀錄。"
+                }
+                showAlert = true
             }
-            showAlert = true
         }
     }
     
@@ -405,7 +414,8 @@ struct DetailView: View {
     @State private var isFav: Bool = false
     @Environment(\.colorScheme) var colorScheme
     var definitions: [DefinitionItem] { DefinitionParser.parse(item.definition) }
-    var isSingleChar: Bool { item.word.count == 1 }
+    var isSingleChar: Bool { item.idiom.count == 1 }
+    var displayPhonetic: String { BopomofoSplitter.normalizeForSyllables(item.phonetic) }
     let isPad = UIDevice.current.userInterfaceIdiom == .pad
     
     var body: some View {
@@ -416,27 +426,34 @@ struct DetailView: View {
                     VStack(spacing: 0) {
                         if isSingleChar {
                             HStack(alignment: .top, spacing: 20) {
-                                MiZiGeView(char: item.word)
+                                MiZiGeView(char: item.idiom)
                                     .frame(width: 140, height: 140)
                                     .shadow(radius: 2)
                                 VStack(alignment: .leading, spacing: 14) {
-                                    Text(item.phonetic)
-                                        .font(.system(size: 24, weight: .heavy))
-                                        .foregroundColor(.white)
-                                        .padding(.vertical, 6).padding(.horizontal, 16)
-                                        .background(Capsule().fill(Color.orange))
-                                        .shadow(color: .orange.opacity(0.3), radius: 3, x: 0, y: 2)
-                                    Divider()
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        InfoLabel(title: "部首", value: item.radical.isEmpty ? "-" : item.radical, icon: "book.closed")
-                                        InfoLabel(title: "筆畫", value: "\(item.strokeCount) 畫", icon: "pencil")
+                                    if !displayPhonetic.isEmpty {
+                                        Text(displayPhonetic)
+                                            .font(.system(size: 24, weight: .heavy))
+                                            .foregroundColor(.white)
+                                            .padding(.vertical, 6).padding(.horizontal, 16)
+                                            .background(Capsule().fill(Color.orange))
+                                            .shadow(color: .orange.opacity(0.3), radius: 3, x: 0, y: 2)
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         } else {
-                            IdiomBreakdownView(word: item.word, phonetic: item.phonetic)
-                                .padding(.vertical, 10)
+                            VStack(spacing: 12) {
+                                IdiomBreakdownView(idiom: item.idiom, phonetic: item.phonetic)
+                                if !displayPhonetic.isEmpty {
+                                    Text(displayPhonetic)
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.vertical, 6).padding(.horizontal, 16)
+                                        .background(Capsule().fill(Color.orange))
+                                        .shadow(color: .orange.opacity(0.3), radius: 3, x: 0, y: 2)
+                                }
+                            }
+                            .padding(.vertical, 10)
                         }
                     }
                     .padding(24).background(AppTheme.cardBackground).cornerRadius(24)
@@ -444,10 +461,10 @@ struct DetailView: View {
                     
                     HStack(spacing: 20) {
                         ActionButton(icon: "speaker.wave.3.fill", text: "唸發音", color: .blue) {
-                            SpeechManager.shared.speak(item.word)
+                            SpeechManager.shared.speak(item.idiom)
                         }
                         ActionButton(icon: isFav ? "heart.fill" : "heart", text: isFav ? "已收藏" : "收藏", color: isFav ? .red : .gray) {
-                            isFav = DatabaseManager.shared.toggleFavorite(word: item.word)
+                            isFav = DatabaseManager.shared.toggleFavorite(idiom: item.idiom)
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         }
                     }
@@ -455,17 +472,92 @@ struct DetailView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "text.book.closed.fill").foregroundColor(.green)
-                            Text("解釋與造句").font(.headline).foregroundColor(.secondary)
+                            Text("解釋").font(.headline).foregroundColor(.secondary)
                             Spacer()
                         }
                         .padding(.horizontal, 8)
                         
-                        ForEach(definitions) { def in
-                            DefinitionCard(def: def)
-                                .onTapGesture {
-                                    SpeechManager.shared.speak(def.text + (def.example ?? ""))
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                }
+                        if item.definition.isEmpty {
+                            Text("（暫無解釋）")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 8)
+                        } else {
+                            ForEach(definitions) { def in
+                                DefinitionCard(def: def)
+                                    .onTapGesture {
+                                        SpeechManager.shared.speak(def.text + (def.example ?? ""))
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    }
+                            }
+                        }
+                        
+                        if !item.example.isEmpty {
+                            HStack {
+                                Image(systemName: "quote.opening").foregroundColor(.green)
+                                Text("例句").font(.headline).foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 8)
+                            
+                            ExampleCard(text: item.example)
+                        }
+                        
+                        HStack {
+                            Image(systemName: "info.circle.fill").foregroundColor(.blue)
+                            Text("補充").font(.headline).foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 8)
+                        
+                        VStack(alignment: .leading, spacing: 10) {
+                            if !item.pinyin.isEmpty { MetaRow(title: "拼音", value: item.pinyin) }
+                            MetaRow(title: "字數", value: "\(item.characterCount)")
+                            if !item.source.isEmpty { MetaRow(title: "出處", value: item.source) }
+                            if !item.entryType.isEmpty { MetaRow(title: "條目", value: item.entryType) }
+                            if !item.synonyms.isEmpty { MetaRow(title: "近義詞", value: item.synonyms) }
+                            if !item.antonyms.isEmpty { MetaRow(title: "反義詞", value: item.antonyms) }
+                        }
+                        .padding(.horizontal, 8)
+
+                        if !item.referenceTerms.isEmpty {
+                            InfoSection(title: "參考詞語", icon: "list.bullet", text: item.referenceTerms)
+                        }
+
+                        if !item.story.isEmpty {
+                            InfoSection(title: "典故說明", icon: "sparkles", text: item.story)
+                        }
+
+                        if !item.sourceText.isEmpty {
+                            InfoSection(title: "典源文獻內容", icon: "doc.text", text: item.sourceText)
+                        }
+
+                        if !item.sourceNote.isEmpty {
+                            InfoSection(title: "典源注解", icon: "text.alignleft", text: item.sourceNote)
+                        }
+
+                        if !item.sourceRef.isEmpty {
+                            InfoSection(title: "典源參考資料", icon: "link", text: item.sourceRef)
+                        }
+
+                        if !item.citations.isEmpty {
+                            InfoSection(title: "書證", icon: "book", text: item.citations)
+                        }
+
+                        if !item.discriminationForm.isEmpty {
+                            InfoSection(title: "辨識-形音辨誤", icon: "exclamationmark.triangle", text: item.discriminationForm)
+                        }
+
+                        if !item.discriminationSame.isEmpty {
+                            InfoSection(title: "辨識-同", icon: "arrow.left.and.right", text: item.discriminationSame)
+                        }
+
+                        if !item.discriminationDiff.isEmpty {
+                            InfoSection(title: "辨識-異", icon: "arrow.triangle.branch", text: item.discriminationDiff)
+                        }
+
+                        if !item.discriminationExample.isEmpty {
+                            InfoSection(title: "辨識-例句", icon: "quote.bubble", text: item.discriminationExample)
                         }
                     }
                     .padding(.bottom, 40)
@@ -476,8 +568,8 @@ struct DetailView: View {
             }
         }
         .onAppear {
-            isFav = DatabaseManager.shared.isFavorite(word: item.word)
-            DatabaseManager.shared.addToHistory(word: item.word)
+            isFav = DatabaseManager.shared.isFavorite(idiom: item.idiom)
+            DatabaseManager.shared.addToHistory(idiom: item.idiom)
         }
         .onDisappear { SpeechManager.shared.stop() }
     }
@@ -511,8 +603,8 @@ struct FavoritesListView: View {
     var uniqueItems: [DictItem] {
         var seen = Set<String>()
         return items.filter { item in
-            if seen.contains(item.word) { return false }
-            else { seen.insert(item.word); return true }
+            if seen.contains(item.idiom) { return false }
+            else { seen.insert(item.idiom); return true }
         }
     }
     
@@ -521,7 +613,7 @@ struct FavoritesListView: View {
             HStack {
                 Label("我的收藏", systemImage: "heart.fill").font(.headline).foregroundColor(.red)
                 Spacer()
-                Text("\(uniqueItems.count) 個單字").font(.caption).foregroundColor(.secondary)
+                Text("\(uniqueItems.count) 個成語").font(.caption).foregroundColor(.secondary)
             }
             .padding(.horizontal).padding(.top, 8)
             ScrollView {
@@ -569,7 +661,7 @@ struct HistoryListView: View {
 // ==========================================
 
 struct EmptyStateView: View {
-    var title: String = "輸入單字開始查詢"
+    var title: String = "輸入成語開始查詢"
     var icon: String = "book.closed.circle.fill"
     
     var body: some View {
@@ -608,9 +700,11 @@ struct MiZiGeView: View {
 }
 
 struct IdiomBreakdownView: View {
-    let word: String; let phonetic: String
+    let idiom: String
+    let phonetic: String
     var body: some View {
-        let chars = Array(word); let phonetics = BopomofoSplitter.split(phonetic: phonetic, count: chars.count)
+        let chars = Array(idiom)
+        let phonetics = BopomofoSplitter.split(phonetic: phonetic, count: chars.count)
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
                 ForEach(0..<chars.count, id: \.self) { index in
@@ -636,28 +730,31 @@ struct WordCardView: View {
     let item: DictItem
     @Environment(\.colorScheme) var colorScheme
     var body: some View {
+        let displayPhonetic = BopomofoSplitter.normalizeForSyllables(item.phonetic)
+        let previewText = !item.definition.isEmpty ? item.definition
+            : (!item.example.isEmpty ? item.example : "（暫無解釋）")
         HStack(alignment: .top, spacing: 15) {
-            if item.word.count == 1 {
+            if item.idiom.count == 1 {
                 VStack(alignment: .center, spacing: 6) {
-                    Text(item.word)
+                    Text(item.idiom)
                         .font(AppTheme.moeKaiFont(size: 34))
                         .foregroundColor(AppTheme.primary)
-                    Text(item.phonetic).font(.system(size: 14, weight: .medium)).foregroundColor(AppTheme.secondary)
+                    Text(displayPhonetic).font(.system(size: 14, weight: .medium)).foregroundColor(AppTheme.secondary)
                 }
                 .frame(minWidth: 80).padding(.vertical, 12).padding(.horizontal, 4)
                 .background(Color.blue.opacity(colorScheme == .dark ? 0.2 : 0.05)).cornerRadius(12)
             } else {
-                MiniIdiomView(word: item.word, phonetic: item.phonetic)
+                MiniIdiomView(idiom: item.idiom, phonetic: item.phonetic)
             }
             VStack(alignment: .leading, spacing: 4) {
-                if !item.radical.isEmpty && item.word.count == 1 {
-                    HStack(spacing: 8) {
-                        Text("部首: \(item.radical)").font(.caption2).foregroundColor(.gray)
-                        Text("筆畫: \(item.strokeCount)").font(.caption2).foregroundColor(.gray)
+                HStack(spacing: 8) {
+                    Text("字數: \(item.characterCount)").font(.caption2).foregroundColor(.gray)
+                    if !item.source.isEmpty {
+                        Text("出處: \(item.source)").font(.caption2).foregroundColor(.gray)
                     }
-                    .padding(.bottom, 2)
                 }
-                Text(item.definition).font(.system(size: 16)).foregroundColor(.primary).lineLimit(2).multilineTextAlignment(.leading)
+                .padding(.bottom, 2)
+                Text(previewText).font(.system(size: 16)).foregroundColor(.primary).lineLimit(2).multilineTextAlignment(.leading)
             }
             Spacer()
             Image(systemName: "chevron.right").foregroundColor(.gray.opacity(0.5)).font(.system(size: 14, weight: .bold)).padding(.top, 12)
@@ -668,10 +765,11 @@ struct WordCardView: View {
 }
 
 struct MiniIdiomView: View {
-    let word: String; let phonetic: String
+    let idiom: String
+    let phonetic: String
     @Environment(\.colorScheme) var colorScheme
     var body: some View {
-        let chars = Array(word)
+        let chars = Array(idiom)
         let phonetics = BopomofoSplitter.split(phonetic: phonetic, count: chars.count)
         
         let availableWidth: CGFloat = 220
@@ -726,6 +824,104 @@ struct DefinitionCard: View {
         .padding(16).frame(maxWidth: .infinity, alignment: .leading).background(AppTheme.cardBackground)
         .cornerRadius(20).shadow(color: AppTheme.shadowColor(colorScheme: colorScheme), radius: 4, x: 0, y: 2)
         .overlay(Image(systemName: "speaker.wave.2.circle").foregroundColor(.gray.opacity(0.3)).padding(12), alignment: .topTrailing)
+    }
+}
+
+struct ExampleCard: View {
+    let text: String
+    @Environment(\.colorScheme) var colorScheme
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "quote.opening")
+                .foregroundColor(colorScheme == .dark ? .green.opacity(0.8) : .green)
+                .font(.caption)
+                .padding(.top, 2)
+            Text(text)
+                .font(.system(size: 18))
+                .foregroundColor(colorScheme == .dark ? .green.opacity(0.85) : .green.opacity(0.9))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.cardBackground)
+        .cornerRadius(20)
+        .shadow(color: AppTheme.shadowColor(colorScheme: colorScheme), radius: 4, x: 0, y: 2)
+    }
+}
+
+struct TextBlockCard: View {
+    let text: String
+    @Environment(\.colorScheme) var colorScheme
+    var body: some View {
+        Text(text)
+            .font(.system(size: 18))
+            .foregroundColor(.primary)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AppTheme.cardBackground)
+            .cornerRadius(20)
+            .shadow(color: AppTheme.shadowColor(colorScheme: colorScheme), radius: 4, x: 0, y: 2)
+    }
+}
+
+struct InfoSection: View {
+    let title: String
+    let icon: String
+    let text: String
+    private let initiallyExpanded: Bool
+    @State private var isExpanded: Bool
+
+    init(title: String, icon: String, text: String, initiallyExpanded: Bool = false) {
+        self.title = title
+        self.icon = icon
+        self.text = text
+        self.initiallyExpanded = initiallyExpanded
+        _isExpanded = State(initialValue: initiallyExpanded)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { isExpanded.toggle() } }) {
+                HStack {
+                    Image(systemName: icon).foregroundColor(.blue)
+                    Text(title).font(.headline).foregroundColor(.secondary)
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .foregroundColor(.gray)
+                        .font(.caption)
+                }
+                .padding(.horizontal, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            if isExpanded {
+                TextBlockCard(text: text)
+            }
+        }
+    }
+}
+
+struct MetaRow: View {
+    let title: String
+    let value: String
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 52, alignment: .leading)
+            Text(value)
+                .font(.callout)
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(AppTheme.cardBackground)
+        .cornerRadius(12)
     }
 }
 
@@ -799,7 +995,7 @@ struct LaunchScreenView: View {
                 Image(systemName: "book.fill").font(.system(size: 80)).foregroundColor(.blue)
                     .offset(y: isBouncing ? -20 : 0)
                     .animation(Animation.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: isBouncing)
-                Text("字典準備中...").font(.headline).foregroundColor(.secondary)
+                Text("成語典準備中...").font(.headline).foregroundColor(.secondary)
             }
         }
         .onAppear { isBouncing = true }
@@ -811,7 +1007,7 @@ struct LicenseView: View {
     
     let privacyURL = URL(string: "https://eric1207cvb.github.io/StudentDict/")!
     let eulaURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
-    let moeURL = URL(string: "https://dict.concised.moe.edu.tw/")!
+    let moeURL = URL(string: "https://language.moe.gov.tw/001/Upload/Files/site_content/M0001/respub/dict_idiomsdict_download.html")!
     
     var body: some View {
         NavigationView {
@@ -857,7 +1053,7 @@ struct LicenseView: View {
                     Divider()
                     VStack(alignment: .leading, spacing: 12) {
                         Text("資料來源授權").font(.headline)
-                        Text("本應用程式使用之資料來源為中華民國教育部《國語辭典簡編本》。").font(.body)
+                        Text("本應用程式使用之資料來源為中華民國教育部《成語典》。").font(.body)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("授權條款：").font(.subheadline).bold()
                             Text("創用CC-姓名標示-禁止改作 臺灣 3.0 版").font(.caption).foregroundColor(.secondary)
@@ -867,7 +1063,7 @@ struct LicenseView: View {
                             Text("中華民國教育部（Ministry of Education, R.O.C.）。").font(.caption)
                             Link(destination: moeURL) {
                                 HStack {
-                                    Text("開啟教育部《國語辭典簡編本》官網")
+                                    Text("開啟教育部《成語典》官網")
                                     Spacer()
                                     Image(systemName: "globe")
                                 }
@@ -897,14 +1093,14 @@ struct ExpandedCandidatePanel: View {
     @Binding var isPresented: Bool
     let onSelect: (String) -> Void
     // iPad 增加候選字大小
-    let gridColumns = [GridItem(.adaptive(minimum: UIDevice.current.userInterfaceIdiom == .pad ? 100 : 50), spacing: 14)]
+    let gridColumns = [GridItem(.adaptive(minimum: UIDevice.current.userInterfaceIdiom == .pad ? 140 : 100), spacing: 14)]
     
     var body: some View {
         ZStack {
             Color.black.opacity(0.2).ignoresSafeArea().onTapGesture { withAnimation { isPresented = false } }
             VStack(spacing: 0) {
                 HStack {
-                    Text("請選擇國字").font(.headline).foregroundColor(.primary)
+                    Text("請選擇字").font(.headline).foregroundColor(.primary)
                     Spacer()
                     Button(action: { withAnimation { isPresented = false } }) {
                         Image(systemName: "xmark.circle.fill").font(.title2).foregroundColor(.gray)
@@ -914,12 +1110,14 @@ struct ExpandedCandidatePanel: View {
                 Divider()
                 ScrollView {
                     LazyVGrid(columns: gridColumns, spacing: 12) {
-                        ForEach(candidates, id: \.self) { char in
-                            Button(action: { onSelect(char) }) {
-                                Text(char)
-                                    .font(AppTheme.moeKaiFont(size: UIDevice.current.userInterfaceIdiom == .pad ? 40 : 28))
+                        ForEach(candidates, id: \.self) { candidate in
+                            Button(action: { onSelect(candidate) }) {
+                                Text(candidate)
+                                    .font(AppTheme.moeKaiFont(size: UIDevice.current.userInterfaceIdiom == .pad ? 30 : 22))
                                     .foregroundColor(.primary)
-                                    .frame(minWidth: UIDevice.current.userInterfaceIdiom == .pad ? 90 : 60, minHeight: UIDevice.current.userInterfaceIdiom == .pad ? 90 : 60)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.6)
+                                    .frame(minWidth: UIDevice.current.userInterfaceIdiom == .pad ? 120 : 90, minHeight: UIDevice.current.userInterfaceIdiom == .pad ? 70 : 60)
                                     .background(Color.blue.opacity(0.05))
                                     .cornerRadius(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.blue.opacity(0.1), lineWidth: 1))
                             }
@@ -975,20 +1173,22 @@ struct ZhuyinKeyboardView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "pencil.and.outline").foregroundColor(.orange).font(.title3)
                             if text.isEmpty || !BopomofoData.isBopomofo(text.last ?? " ") {
-                                Text("點擊下方按鍵拼音...").font(.system(size: 16, weight: .medium)).foregroundColor(.gray)
+                                Text("點擊下方按鍵輸入注音...").font(.system(size: 16, weight: .medium)).foregroundColor(.gray)
                             } else {
-                                Text("找不到這個拼音喔！").font(.system(size: 16, weight: .medium)).foregroundColor(.red.opacity(0.6))
+                                Text("找不到這個拼音的字喔！").font(.system(size: 16, weight: .medium)).foregroundColor(.red.opacity(0.6))
                             }
                         }
                     } else {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
-                                ForEach(candidates.prefix(15), id: \.self) { char in
-                                    Button(action: { selectChar(char) }) {
-                                        Text(char)
-                                            .font(AppTheme.moeKaiFont(size: isPad ? 28 : 24))
+                                ForEach(candidates.prefix(15), id: \.self) { candidate in
+                                    Button(action: { selectChar(candidate) }) {
+                                        Text(candidate)
+                                            .font(AppTheme.moeKaiFont(size: isPad ? 22 : 18))
                                             .foregroundColor(.primary)
-                                            .frame(width: isPad ? 50 : 50, height: isPad ? 44 : 44)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.6)
+                                            .frame(width: isPad ? 90 : 70, height: isPad ? 44 : 44)
                                             .background(Color.blue.opacity(0.1)).cornerRadius(10)
                                     }
                                 }
@@ -1017,7 +1217,7 @@ struct ZhuyinKeyboardView: View {
                 HStack(spacing: 6) {
                     ForEach(toneItems, id: \.symbol) { item in
                         Button(action: {
-                            if item.symbol != "ˉ" { text += item.symbol }
+                            applyTone(item.symbol)
                             onUpdate()
                             UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                         }) {
@@ -1096,6 +1296,13 @@ struct ZhuyinKeyboardView: View {
         withAnimation { showExpandedCandidates = false }
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
     }
+    private func applyTone(_ symbol: String) {
+        guard let last = text.last, BopomofoData.isBopomofo(last) else { return }
+        if BopomofoData.tones.contains(String(last)) {
+            text.removeLast()
+        }
+        text += symbol
+    }
     private func getTextColor(for char: String) -> Color {
         if BopomofoData.initials.contains(char) { return .primary }
         if BopomofoData.medials.contains(char) { return Color.green }
@@ -1108,7 +1315,7 @@ struct AdBannerView: UIViewRepresentable {
     func makeUIView(context: Context) -> BannerView {
         let adSize = UIDevice.current.userInterfaceIdiom == .pad ? AdSizeLeaderboard : AdSizeBanner
         let banner = BannerView(adSize: adSize)
-        banner.adUnitID = "ca-app-pub-8563333250584395/7434801065"
+        banner.adUnitID = "ca-app-pub-8563333250584395/5867864061"
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let rootVC = windowScene.windows.first?.rootViewController {
             banner.rootViewController = rootVC

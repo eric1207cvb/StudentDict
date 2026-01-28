@@ -10,7 +10,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // --- A. RevenueCat 設定 ---
         // ⚠️ 請確認下方的 API Key 是正確的
         Purchases.logLevel = .debug
-        Purchases.configure(withAPIKey: "appl_LpAgOPSlVbDmfUlhZkmhOBlWtTb")
+        Purchases.configure(withAPIKey: "appl_ZfXSpiCubLJWENiOHJLaIpZvHfB")
         
         // --- B. AdMob 設定 ---
         // [Fix]: 使用最新的 Swift 語法: MobileAds.shared
