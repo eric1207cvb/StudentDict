@@ -50,13 +50,34 @@ struct DefinitionItem: Identifiable {
     let example: String?
 }
 
+struct HTMLTextCleaner {
+    static func stripTags(_ input: String) -> String {
+        guard !input.isEmpty else { return input }
+        var text = input
+        text = text.replacingOccurrences(of: "<br />", with: "\n")
+        text = text.replacingOccurrences(of: "<br/>", with: "\n")
+        text = text.replacingOccurrences(of: "<br>", with: "\n")
+        let pattern = "<[^>]+>"
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(location: 0, length: (text as NSString).length)
+            text = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        }
+        text = text.replacingOccurrences(of: "&nbsp;", with: " ")
+        text = text.replacingOccurrences(of: "&amp;", with: "&")
+        text = text.replacingOccurrences(of: "&lt;", with: "<")
+        text = text.replacingOccurrences(of: "&gt;", with: ">")
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 class DefinitionParser {
     static func parse(_ rawText: String) -> [DefinitionItem] {
+        let cleanedText = HTMLTextCleaner.stripTags(rawText)
         var items: [DefinitionItem] = []
         let pattern = "\\d+\\."
         let regex = try? NSRegularExpression(pattern: pattern)
-        let nsString = rawText as NSString
-        let results = regex?.matches(in: rawText, range: NSRange(location: 0, length: nsString.length)) ?? []
+        let nsString = cleanedText as NSString
+        let results = regex?.matches(in: cleanedText, range: NSRange(location: 0, length: nsString.length)) ?? []
         
         if !results.isEmpty {
             var lastLocation = 0
@@ -74,7 +95,7 @@ class DefinitionParser {
                 items.append(createItem(number: "\(results.count)", fullText: content))
             }
         } else {
-            items.append(createItem(number: nil, fullText: rawText))
+            items.append(createItem(number: nil, fullText: cleanedText))
         }
         return items
     }
@@ -500,7 +521,7 @@ struct DetailView: View {
                             }
                             .padding(.horizontal, 8)
                             
-                            ExampleCard(text: item.example)
+                            ExampleCard(text: HTMLTextCleaner.stripTags(item.example))
                         }
                         
                         HStack {
@@ -731,8 +752,8 @@ struct WordCardView: View {
     @Environment(\.colorScheme) var colorScheme
     var body: some View {
         let displayPhonetic = BopomofoSplitter.normalizeForSyllables(item.phonetic)
-        let previewText = !item.definition.isEmpty ? item.definition
-            : (!item.example.isEmpty ? item.example : "（暫無解釋）")
+        let previewText = !item.definition.isEmpty ? HTMLTextCleaner.stripTags(item.definition)
+            : (!item.example.isEmpty ? HTMLTextCleaner.stripTags(item.example) : "（暫無解釋）")
         HStack(alignment: .top, spacing: 15) {
             if item.idiom.count == 1 {
                 VStack(alignment: .center, spacing: 6) {
@@ -750,7 +771,7 @@ struct WordCardView: View {
                 HStack(spacing: 8) {
                     Text("字數: \(item.characterCount)").font(.caption2).foregroundColor(.gray)
                     if !item.source.isEmpty {
-                        Text("出處: \(item.source)").font(.caption2).foregroundColor(.gray)
+                        Text("出處: \(HTMLTextCleaner.stripTags(item.source))").font(.caption2).foregroundColor(.gray)
                     }
                 }
                 .padding(.bottom, 2)
@@ -898,7 +919,7 @@ struct InfoSection: View {
             .buttonStyle(PlainButtonStyle())
             
             if isExpanded {
-                TextBlockCard(text: text)
+                TextBlockCard(text: HTMLTextCleaner.stripTags(text))
             }
         }
     }
@@ -908,12 +929,13 @@ struct MetaRow: View {
     let title: String
     let value: String
     var body: some View {
+        let cleanValue = HTMLTextCleaner.stripTags(value)
         HStack(alignment: .top, spacing: 8) {
             Text(title)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .frame(width: 52, alignment: .leading)
-            Text(value)
+            Text(cleanValue)
                 .font(.callout)
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1007,7 +1029,7 @@ struct LicenseView: View {
     
     let privacyURL = URL(string: "https://eric1207cvb.github.io/StudentDict/privacy-idiom.html")!
     let eulaURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
-    let moeURL = URL(string: "https://language.moe.gov.tw/001/Upload/Files/site_content/M0001/respub/dict_idiomsdict_download.html")!
+    let moeURL = URL(string: "https://dict.idioms.moe.edu.tw/search.jsp?webMd=2&la=0")!
     
     var body: some View {
         NavigationView {
