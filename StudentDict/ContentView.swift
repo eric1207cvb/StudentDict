@@ -1005,7 +1005,7 @@ struct LaunchScreenView: View {
 struct LicenseView: View {
     @Environment(\.presentationMode) var presentationMode
     
-    let privacyURL = URL(string: "https://eric1207cvb.github.io/StudentDict/")!
+    let privacyURL = URL(string: "https://eric1207cvb.github.io/StudentDict/privacy-idiom.html")!
     let eulaURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
     let moeURL = URL(string: "https://language.moe.gov.tw/001/Upload/Files/site_content/M0001/respub/dict_idiomsdict_download.html")!
     
@@ -1263,7 +1263,7 @@ struct ZhuyinKeyboardView: View {
                 
                 // 4. 隱私權與 EULA (避免被 Home Indicator 遮擋)
                 HStack(spacing: 16) {
-                    Link("隱私權政策", destination: URL(string: "https://eric1207cvb.github.io/StudentDict/")!)
+                    Link("隱私權政策", destination: URL(string: "https://eric1207cvb.github.io/StudentDict/privacy-idiom.html")!)
                     Text("|").foregroundColor(.gray.opacity(0.5))
                     Link("使用者授權合約 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                 }
