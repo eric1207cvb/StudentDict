@@ -116,6 +116,7 @@ struct PaywallView: View {
                 print("購買失敗: \(error.localizedDescription)")
             } else if !userCancelled {
                 print("購買成功！")
+                PurchaseManager.shared.updatePremiumStatus(with: customerInfo)
                 isPresented = false // 關閉視窗
             }
         }
@@ -126,8 +127,10 @@ struct PaywallView: View {
         Purchases.shared.restorePurchases { (customerInfo, error) in
             if let info = customerInfo, info.entitlements["premium"]?.isActive == true {
                 print("恢復成功！")
+                PurchaseManager.shared.updatePremiumStatus(with: customerInfo)
                 isPresented = false
             } else {
+                PurchaseManager.shared.updatePremiumStatus(with: customerInfo)
                 print("查無購買紀錄")
             }
         }
