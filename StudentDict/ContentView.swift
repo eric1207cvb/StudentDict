@@ -188,158 +188,183 @@ struct ContentView: View {
                     ZStack {
                         AppTheme.background.ignoresSafeArea()
                         
-                        // 主結構 (垂直堆疊)
-                        VStack(spacing: 0) {
-                            
-                            // --- [A] 頂部區域 (Header) ---
+                        GeometryReader { proxy in
+                            let useCompactKeyboard = isPad
+                            let desiredKeyboardHeight: CGFloat = useCompactKeyboard ? 460 : 420
+                            let adHeight: CGFloat = purchaseManager.isPremium ? 0 : (isPad ? (showCustomKeyboard ? 60 : 90) : 60)
+                            let adSpacing: CGFloat = showCustomKeyboard ? (isPad ? 8 : 6) : 0
+                            let privacyRowHeight: CGFloat = showCustomKeyboard ? (useCompactKeyboard ? 28 : 32) : 0
+                            let footerMaxHeight = proxy.size.height * (isPad ? 1.0 : 0.4)
+                            let keyboardHeight = isPad ? desiredKeyboardHeight : min(desiredKeyboardHeight, max(0, footerMaxHeight - privacyRowHeight))
+                            // 主結構 (垂直堆疊)
                             VStack(spacing: 0) {
-                                HStack {
-                                    Text("成語典")
-                                        .font(isPad ? .system(size: 26, weight: .bold) : .headline)
-                                        .foregroundColor(.primary)
-                                    Spacer()
-                                    Menu {
-                                        if !purchaseManager.isPremium {
-                                            Button(action: { startDirectPurchase() }) {
-                                                Label("移除廣告 (NT$60)", systemImage: "heart.fill")
-                                            }
-                                        }
-                                        Button(action: { restorePurchases() }) {
-                                            Label("恢復購買", systemImage: "arrow.clockwise")
-                                        }
-                                        Button(action: { showLicense = true }) {
-                                            Label("關於本程式", systemImage: "info.circle")
-                                        }
-                                    } label: {
-                                        Image(systemName: "ellipsis.circle")
-                                            .font(.system(size: 24))
+                            
+                                // --- [A] 頂部區域 (Header) ---
+                                VStack(spacing: 0) {
+                                    HStack {
+                                        Text("成語典")
+                                            .font(isPad ? .system(size: 26, weight: .bold) : .headline)
                                             .foregroundColor(.primary)
-                                            .padding(8)
-                                    }
-                                }
-                                .padding(.horizontal)
-                                .padding(.top, isPad ? 16 : 8)
-                                .padding(.bottom, 8)
-                                
-                                // 搜尋列
-                                VStack(spacing: 12) {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "magnifyingglass")
-                                            .foregroundColor(.gray)
-                                            .font(isPad ? .title2 : .body)
-                                        
-                                        SimulatedTextField(text: searchText, placeholder: "輸入成語或按麥克風")
-                                            .onTapGesture { withAnimation(.spring()) { showCustomKeyboard = true } }
-                                            // [Version Update]: iPad 高度優化
-                                            .frame(height: isPad ? 50 : 36)
-                                        
-                                        if !searchText.isEmpty {
-                                            Button(action: { searchText = ""; results = [] }) {
-                                                Image(systemName: "xmark.circle.fill").foregroundColor(.gray).font(isPad ? .title2 : .title3)
-                                            }
-                                            Button(action: {
-                                                if !searchText.isEmpty {
-                                                    searchText.removeLast()
-                                                    if searchText.isEmpty { results = [] }
-                                                    else { performSearch(keyword: searchText) }
-                                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                        Spacer()
+                                        Menu {
+                                            if !purchaseManager.isPremium {
+                                                Button(action: { startDirectPurchase() }) {
+                                                    Label("移除廣告 (NT$60)", systemImage: "heart.fill")
                                                 }
+                                            }
+                                            Button(action: { restorePurchases() }) {
+                                                Label("恢復購買", systemImage: "arrow.clockwise")
+                                            }
+                                            Button(action: { showLicense = true }) {
+                                                Label("關於本程式", systemImage: "info.circle")
+                                            }
+                                        } label: {
+                                            Image(systemName: "ellipsis.circle")
+                                                .font(.system(size: 24))
+                                                .foregroundColor(.primary)
+                                                .padding(8)
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                    .padding(.top, isPad ? 16 : 8)
+                                    .padding(.bottom, 8)
+                                    
+                                    // 搜尋列
+                                    VStack(spacing: 12) {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "magnifyingglass")
+                                                .foregroundColor(.gray)
+                                                .font(isPad ? .title2 : .body)
+                                            
+                                            SimulatedTextField(text: searchText, placeholder: "輸入成語或按麥克風")
+                                                .onTapGesture { withAnimation(.spring()) { showCustomKeyboard = true } }
+                                                // [Version Update]: iPad 高度優化
+                                                .frame(height: isPad ? 50 : 36)
+                                            
+                                            if !searchText.isEmpty {
+                                                Button(action: { searchText = ""; results = [] }) {
+                                                    Image(systemName: "xmark.circle.fill").foregroundColor(.gray).font(isPad ? .title2 : .title3)
+                                                }
+                                                Button(action: {
+                                                    if !searchText.isEmpty {
+                                                        searchText.removeLast()
+                                                        if searchText.isEmpty { results = [] }
+                                                        else { performSearch(keyword: searchText) }
+                                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                                    }
+                                                }) {
+                                                    Image(systemName: "delete.left.fill").foregroundColor(.gray).font(isPad ? .title2 : .title3).padding(.leading, 4)
+                                                }
+                                            }
+                                            
+                                            Button(action: {
+                                                speechInput.toggleRecording()
+                                                if speechInput.isRecording { showCustomKeyboard = false }
+                                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                             }) {
-                                                Image(systemName: "delete.left.fill").foregroundColor(.gray).font(isPad ? .title2 : .title3).padding(.leading, 4)
+                                                Image(systemName: speechInput.isRecording ? "mic.fill" : "mic")
+                                                    .font(isPad ? .title : .title2)
+                                                    .foregroundColor(speechInput.isRecording ? .red : .blue)
+                                                    .scaleEffect(speechInput.isRecording ? 1.2 : 1.0)
+                                            }
+                                            
+                                            Button(action: { withAnimation(.spring()) { showCustomKeyboard.toggle() } }) {
+                                                Image(systemName: showCustomKeyboard ? "keyboard.chevron.compact.down.fill" : "keyboard.fill")
+                                                    .font(isPad ? .title : .title2)
+                                                    .foregroundColor(showCustomKeyboard ? .orange : .gray)
                                             }
                                         }
+                                        .padding(isPad ? 14 : 12)
+                                        .background(AppTheme.cardBackground)
+                                        .cornerRadius(12)
+                                        .shadow(color: AppTheme.shadowColor(colorScheme: colorScheme), radius: 5)
                                         
-                                        Button(action: {
-                                            speechInput.toggleRecording()
-                                            if speechInput.isRecording { showCustomKeyboard = false }
-                                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                        }) {
-                                            Image(systemName: speechInput.isRecording ? "mic.fill" : "mic")
-                                                .font(isPad ? .title : .title2)
-                                                .foregroundColor(speechInput.isRecording ? .red : .blue)
-                                                .scaleEffect(speechInput.isRecording ? 1.2 : 1.0)
-                                        }
-                                        
-                                        Button(action: { withAnimation(.spring()) { showCustomKeyboard.toggle() } }) {
-                                            Image(systemName: showCustomKeyboard ? "keyboard.chevron.compact.down.fill" : "keyboard.fill")
-                                                .font(isPad ? .title : .title2)
-                                                .foregroundColor(showCustomKeyboard ? .orange : .gray)
+                                        if searchText.isEmpty {
+                                            Picker("Tab", selection: $selectedTab) {
+                                                Text("最近查詢").tag(0)
+                                                Text("我的收藏").tag(1)
+                                            }
+                                            .pickerStyle(SegmentedPickerStyle())
+                                            .padding(.horizontal, 4)
                                         }
                                     }
-                                    .padding(isPad ? 14 : 12)
-                                    .background(AppTheme.cardBackground)
-                                    .cornerRadius(12)
-                                    .shadow(color: AppTheme.shadowColor(colorScheme: colorScheme), radius: 5)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
                                     
-                                    if searchText.isEmpty {
-                                        Picker("Tab", selection: $selectedTab) {
-                                            Text("最近查詢").tag(0)
-                                            Text("我的收藏").tag(1)
-                                        }
-                                        .pickerStyle(SegmentedPickerStyle())
-                                        .padding(.horizontal, 4)
-                                    }
+                                    if speechInput.isRecording { Text("正在聆聽...").font(.caption).foregroundColor(.red).padding(.bottom, 8) }
                                 }
-                                .padding(.horizontal)
-                                .padding(.bottom, 10)
+                                // 限制頂部寬度，集中視覺
+                                .frame(maxWidth: isPad ? 680 : .infinity)
                                 
-                                if speechInput.isRecording { Text("正在聆聽...").font(.caption).foregroundColor(.red).padding(.bottom, 8) }
-                            }
-                            // 限制頂部寬度，集中視覺
-                            .frame(maxWidth: isPad ? 680 : .infinity)
-                            
-                            // --- [B] Content ---
-                            ZStack {
-                                if !searchText.isEmpty {
-                                    if results.isEmpty {
-                                        VStack {
-                                            Spacer(); Text("搜尋中 / 查無結果").foregroundColor(.gray); Spacer()
+                                // --- [B] Content ---
+                                ZStack {
+                                    if !searchText.isEmpty {
+                                        if results.isEmpty {
+                                            VStack {
+                                                Spacer(); Text("搜尋中 / 查無結果").foregroundColor(.gray); Spacer()
+                                            }
+                                        } else {
+                                            ResultListView(items: results)
                                         }
                                     } else {
-                                        ResultListView(items: results)
-                                    }
-                                } else {
-                                    if selectedTab == 0 {
-                                        if historyItems.isEmpty { EmptyStateView(title: "尚無查詢紀錄") }
-                                        else {
-                                            HistoryListView(items: historyItems, onClear: {
-                                                DatabaseManager.shared.clearHistory(); loadData()
-                                            })
-                                        }
-                                    } else {
-                                        if favoriteItems.isEmpty { EmptyStateView(title: "尚無收藏成語", icon: "heart.slash") }
-                                        else {
-                                            FavoritesListView(items: favoriteItems) { loadData() }
+                                        if selectedTab == 0 {
+                                            if historyItems.isEmpty { EmptyStateView(title: "尚無查詢紀錄") }
+                                            else {
+                                                HistoryListView(items: historyItems, onClear: {
+                                                    DatabaseManager.shared.clearHistory(); loadData()
+                                                })
+                                            }
+                                        } else {
+                                            if favoriteItems.isEmpty { EmptyStateView(title: "尚無收藏成語", icon: "heart.slash") }
+                                            else {
+                                                FavoritesListView(items: favoriteItems) { loadData() }
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            .frame(maxWidth: isPad ? 800 : .infinity)
-                            .frame(maxHeight: .infinity)
-                            
-                            // --- [C] Footer (Ads + Keyboard) ---
-                            VStack(spacing: 0) {
+                                .frame(maxWidth: isPad ? 800 : .infinity)
+                                .frame(maxHeight: .infinity)
+                                
                                 if !purchaseManager.isPremium {
                                     AdBannerView()
-                                        .frame(height: isPad ? 90 : 60)
+                                        .frame(height: adHeight)
                                         .frame(maxWidth: .infinity)
-                                        .background(Color(UIColor.systemGray6)) // [Version Update]: 統一背景色
-                                }
-                                
-                                if showCustomKeyboard {
-                                    ZhuyinKeyboardView(text: $searchText, onUpdate: { performSearch(keyword: searchText) })
-                                        // [Version Update]: iPad 高度微調至 420，給底部連結更多空間
-                                        .frame(height: isPad ? 420 : 360)
-                                        .frame(maxWidth: isPad ? 640 : .infinity)
+                                        .clipped()
                                         .background(Color(UIColor.systemGray6))
-                                        .cornerRadius(isPad ? 16 : 0, corners: [.topLeft, .topRight])
-                                        .shadow(color: isPad ? .black.opacity(0.1) : .clear, radius: 10, x: 0, y: -5)
-                                        .transition(.move(edge: .bottom))
-                                        .padding(.bottom, isPad ? 10 : 0)
+                                        .padding(.bottom, adSpacing)
                                 }
                             }
-                            .frame(maxWidth: .infinity)
-                            .background(Color(UIColor.systemGray6).ignoresSafeArea(edges: .bottom))
+                            .safeAreaInset(edge: .bottom, spacing: 0) {
+                                VStack(spacing: 0) {
+                                    if showCustomKeyboard {
+                                        ZhuyinKeyboardView(text: $searchText, compact: useCompactKeyboard, onUpdate: { performSearch(keyword: searchText) })
+                                            .frame(maxHeight: .infinity, alignment: .top)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .frame(maxWidth: isPad ? 640 : .infinity)
+                                            .background(Color(UIColor.systemGray6))
+                                            .cornerRadius(isPad ? 16 : 0, corners: [.topLeft, .topRight])
+                                            .shadow(color: isPad ? .black.opacity(0.1) : .clear, radius: 10, x: 0, y: -5)
+                                            .transition(.move(edge: .bottom))
+                                            .clipped()
+                                            .zIndex(2)
+                                    }
+                                    
+                                    if showCustomKeyboard {
+                                        HStack(spacing: 16) {
+                                            Link("隱私權政策", destination: URL(string: "https://eric1207cvb.github.io/StudentDict/privacy-idiom.html")!)
+                                            Text("|").foregroundColor(.gray.opacity(0.5))
+                                            Link("使用者授權合約 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
+                                        }
+                                        .font(.caption2)
+                                        .foregroundColor(.gray)
+                                        .padding(.top, isPad ? 12 : 8)
+                                        .padding(.bottom, isPad ? 20 : 12)
+                                        .zIndex(1)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .background(Color(UIColor.systemGray6).ignoresSafeArea(edges: .bottom))
+                            }
                         }
                     }
                     .navigationTitle("")
@@ -1157,6 +1182,7 @@ struct ExpandedCandidatePanel: View {
 
 struct ZhuyinKeyboardView: View {
     @Binding var text: String
+    var compact: Bool = false
     var onUpdate: () -> Void
     @Environment(\.colorScheme) var colorScheme
     @State private var showExpandedCandidates = false
@@ -1164,6 +1190,23 @@ struct ZhuyinKeyboardView: View {
     
     // 判斷裝置
     let isPad = UIDevice.current.userInterfaceIdiom == .pad
+    var useCompact: Bool { !isPad || compact }
+
+    var candidateFontSize: CGFloat { useCompact ? 16 : 22 }
+    var candidateWidth: CGFloat { useCompact ? 64 : 90 }
+    var candidateHeight: CGFloat { useCompact ? 34 : 44 }
+    var candidateRowHeight: CGFloat { useCompact ? 44 : 56 }
+    var toneSymbolSize: CGFloat { useCompact ? 15 : 24 }
+    var toneNameSize: CGFloat { useCompact ? 9 : 11 }
+    var toneButtonHeight: CGFloat { useCompact ? keyMinHeight : 44 }
+    var deleteButtonWidth: CGFloat { useCompact ? 48 : 60 }
+    var keyFontSize: CGFloat { useCompact ? 17 : 26 }
+    var keyMinWidth: CGFloat { useCompact ? 32 : 48 }
+    var keyMinHeight: CGFloat { useCompact ? 30 : 44 }
+    var verticalSpacing: CGFloat { useCompact ? 3 : 8 }
+    var gridSpacing: CGFloat { useCompact ? 4 : 8 }
+    var gridHorizontalPadding: CGFloat { useCompact ? 6 : 16 }
+    var topPadding: CGFloat { useCompact ? 8 : 12 }
     
     var gridBopomofo: [String] { BopomofoData.initials + BopomofoData.medials + BopomofoData.finals }
     
@@ -1176,14 +1219,17 @@ struct ZhuyinKeyboardView: View {
     
     // [iPad 優化]: 稍微放寬間距
     var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: isPad ? 64 : 36), spacing: isPad ? 8 : 5)]
+        if useCompact {
+            return Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: 9)
+        }
+        return [GridItem(.adaptive(minimum: 64), spacing: gridSpacing)]
     }
     
     var body: some View {
         ZStack {
-            (colorScheme == .dark ? Color(UIColor.systemGray6) : Color(UIColor.systemGray6)).ignoresSafeArea()
+            (colorScheme == .dark ? Color(UIColor.systemGray6) : Color(UIColor.systemGray6))
             
-            VStack(spacing: isPad ? 8 : 4) { // [iPad 優化]: 調整垂直間距
+            VStack(spacing: verticalSpacing) { // [iPad 優化]: 調整垂直間距
                 
                 // 1. 候選字與拼音顯示列
                 ZStack {
@@ -1206,11 +1252,11 @@ struct ZhuyinKeyboardView: View {
                                 ForEach(candidates.prefix(15), id: \.self) { candidate in
                                     Button(action: { selectChar(candidate) }) {
                                         Text(candidate)
-                                            .font(AppTheme.moeKaiFont(size: isPad ? 22 : 18))
+                                            .font(AppTheme.moeKaiFont(size: candidateFontSize))
                                             .foregroundColor(.primary)
                                             .lineLimit(1)
                                             .minimumScaleFactor(0.6)
-                                            .frame(width: isPad ? 90 : 70, height: isPad ? 44 : 44)
+                                            .frame(width: candidateWidth, height: candidateHeight)
                                             .background(Color.blue.opacity(0.1)).cornerRadius(10)
                                     }
                                 }
@@ -1231,9 +1277,9 @@ struct ZhuyinKeyboardView: View {
                         }
                     }
                 }
-                .frame(height: isPad ? 56 : 50) // [iPad 優化]: 候選字列增高
+                .frame(height: candidateRowHeight) // [iPad 優化]: 候選字列增高
                 .padding(.horizontal, 8)
-                .padding(.top, isPad ? 12 : 12)
+                .padding(.top, topPadding)
                 
                 // 2. 聲調列
                 HStack(spacing: 6) {
@@ -1244,11 +1290,11 @@ struct ZhuyinKeyboardView: View {
                             UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                         }) {
                             VStack(spacing: 0) {
-                                Text(item.symbol).font(.system(size: isPad ? 24 : 20, weight: .bold)).frame(height: isPad ? 26 : 24)
-                                Text(item.name).font(.system(size: isPad ? 11 : 10, weight: .regular)).padding(.bottom, 2)
+                                Text(item.symbol).font(.system(size: toneSymbolSize, weight: .bold)).frame(height: useCompact ? 22 : 26)
+                                Text(item.name).font(.system(size: toneNameSize, weight: .regular)).padding(.bottom, 2)
                             }
                             // [iPad 優化]: 聲調按鍵增高
-                            .foregroundColor(.purple).frame(maxWidth: .infinity).frame(height: isPad ? 44 : 42)
+                            .foregroundColor(.purple).frame(maxWidth: .infinity).frame(height: toneButtonHeight)
                             .background(Color.purple.opacity(0.1)).cornerRadius(8)
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.2), lineWidth: 1))
                         }
@@ -1257,43 +1303,29 @@ struct ZhuyinKeyboardView: View {
                         if !text.isEmpty { text.removeLast(); onUpdate() }
                         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                     }) {
-                        Image(systemName: "delete.left.fill").font(.system(size: isPad ? 26 : 20)).foregroundColor(.white)
-                            .frame(width: isPad ? 60 : 54, height: isPad ? 44 : 42).background(Color.gray.opacity(0.8)).cornerRadius(8)
+                        Image(systemName: "delete.left.fill").font(.system(size: useCompact ? 20 : 26)).foregroundColor(.white)
+                            .frame(width: deleteButtonWidth, height: toneButtonHeight).background(Color.gray.opacity(0.8)).cornerRadius(8)
                     }
                 }
                 .padding(.horizontal, 8)
                 
                 // 3. 注音鍵盤區
-                LazyVGrid(columns: columns, spacing: isPad ? 8 : 6) { // [iPad 優化]: 間距
+                LazyVGrid(columns: columns, spacing: gridSpacing) { // [iPad 優化]: 間距
                     ForEach(gridBopomofo, id: \.self) { char in
                         Button(action: {
                             text += char
                             onUpdate()
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         }) {
-                            Text(char).font(.system(size: isPad ? 26 : 20, weight: .semibold)).foregroundColor(getTextColor(for: char))
-                                .frame(minWidth: isPad ? 48 : 32, minHeight: isPad ? 46 : 40).frame(maxWidth: .infinity)
+                            Text(char).font(.system(size: keyFontSize, weight: .semibold)).foregroundColor(getTextColor(for: char))
+                                .frame(minWidth: keyMinWidth, minHeight: keyMinHeight).frame(maxWidth: .infinity)
                                 .background(colorScheme == .dark ? Color.white.opacity(0.15) : Color.white).cornerRadius(6)
                                 .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.1), radius: 1, x: 0, y: 1)
                         }
                     }
                 }
-                .padding(.horizontal, isPad ? 16 : 8)
+                .padding(.horizontal, gridHorizontalPadding)
                 .padding(.bottom, 0)
-                
-                Spacer(minLength: 0)
-                
-                // 4. 隱私權與 EULA (避免被 Home Indicator 遮擋)
-                HStack(spacing: 16) {
-                    Link("隱私權政策", destination: URL(string: "https://eric1207cvb.github.io/StudentDict/privacy-idiom.html")!)
-                    Text("|").foregroundColor(.gray.opacity(0.5))
-                    Link("使用者授權合約 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
-                }
-                .font(.caption2)
-                .foregroundColor(.gray)
-                // [Version Update]: iPad 底部增加 Padding 至 40
-                .padding(.bottom, isPad ? 40 : 20)
-                .layoutPriority(1)
             }
             
             if showExpandedCandidates {
