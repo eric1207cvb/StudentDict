@@ -12,7 +12,7 @@ class PurchaseManager: ObservableObject {
     // ⚠️ 記得要去 RevenueCat 後台複製您的 API Key 填入這裡
     private let apiKey = "appl_ZfXSpiCubLJWENiOHJLaIpZvHfB"
     private let entitlementId = "premium"
-    private let removeAdsProductId = "remove_ads"
+    private let removeAdsProductId = "idiomdict.remove_ads"
     
     init() {
             // [刪除] 這兩行刪掉，因為 StudentDictApp.swift 已經做過了
