@@ -25,7 +25,7 @@
           "locale" : "zh_Hant"
         }
       ],
-      "productID" : "remove_ads",
+      "productID" : "idiomdict.remove_ads",
       "referenceName" : "Remove Ads",
       "type" : "NonConsumable"
     }

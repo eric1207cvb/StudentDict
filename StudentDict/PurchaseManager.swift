@@ -10,7 +10,7 @@ class PurchaseManager: ObservableObject {
     
     // 請填入您 RevenueCat 後台的 Public API Key
     // ⚠️ 記得要去 RevenueCat 後台複製您的 API Key 填入這裡
-    private let apiKey = "appl_ZfXSpiCubLJWENiOHJLaIpZvHfB"
+    private let apiKey = "appl_CHzApfUVTNYBrjzwIOXeIDUBTOU"
     private let entitlementId = "premium"
     private let removeAdsProductId = "idiomdict.remove_ads"
     
