@@ -9,7 +9,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // --- A. RevenueCat 設定 ---
         // ⚠️ 請確認下方的 API Key 是正確的
-        Purchases.logLevel = .debug
+        Purchases.logLevel = .warn
         Purchases.configure(withAPIKey: "appl_CHzApfUVTNYBrjzwIOXeIDUBTOU")
         
         // --- B. AdMob 設定 ---

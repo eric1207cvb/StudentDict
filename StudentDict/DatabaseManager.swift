@@ -38,6 +38,23 @@ class DatabaseManager {
     
     // 設定最大收藏數量
     private let maxFavoritesCount = 30
+
+    private struct RankedCharCandidate {
+        let word: String
+        let quality: Int
+        let dictionaryOrder: Int
+        let polyphonicOrder: Int
+        let strokeCount: Int
+    }
+
+    private struct RankedContextCandidate {
+        let word: String
+        var quality: Int
+        var exactHits: Int
+        var fallbackHits: Int
+        var shortestIdiomLength: Int
+        var dictionaryRank: Int
+    }
     
     private init() {
         openDatabase()
@@ -175,12 +192,39 @@ class DatabaseManager {
     }
     
     // MARK: - ⌨️ 鍵盤候選字搜尋
+    func keyboardCandidates(for bopomofo: String, prefix: String) -> [String] {
+        let trimmedPrefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedPrefix.isEmpty {
+            return mergeCandidateLists(
+                searchCharByPhonetic(bopomofo),
+                searchByPhonetic(bopomofo, prefix: ""),
+                searchByPhoneticAnyPosition(bopomofo),
+                limit: 60
+            )
+        }
+
+        let contextual = searchByPhonetic(bopomofo, prefix: trimmedPrefix)
+        if !contextual.isEmpty {
+            return mergeCandidateLists(contextual, searchCharByPhonetic(bopomofo), limit: 60)
+        }
+
+        return mergeCandidateLists(
+            searchCharByPhonetic(bopomofo),
+            searchByPhonetic(bopomofo, prefix: ""),
+            searchByPhoneticAnyPosition(bopomofo),
+            limit: 60
+        )
+    }
+
     func searchByPhonetic(_ bopomofo: String, prefix: String) -> [String] {
-        var rawResults: [String] = []
-        var fallbackResults: [String] = []
         guard let db = db else { return [] }
         if bopomofo.isEmpty { return [] }
+        let query = parseBopomofoQuery(bopomofo)
+        if query.base.isEmpty { return [] }
         let queryHasTone = parseBopomofoQuery(bopomofo).tone != nil
+        let prefixCount = prefix.count
+        let dictionaryRankMap = buildDictionaryRankMap(for: bopomofo)
+        var candidateMap: [String: RankedContextCandidate] = [:]
         
         let idiomExpr = normalizedIdiomExpr(alias: "d")
         let phoneticExpr = normalizedPhoneticExpr(alias: "d")
@@ -207,14 +251,13 @@ class DatabaseManager {
         
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, querySQL, -1, &stmt, nil) == SQLITE_OK {
-            let searchString = prefix.isEmpty ? "\(bopomofo)%" : "\(prefix)%"
+            let searchString = prefix.isEmpty ? "\(query.base)%" : "\(prefix)%"
             sqlite3_bind_text(stmt, 1, (searchString as NSString).utf8String, -1, nil)
             if prefix.isEmpty {
-                let variantSearch = "（%\(bopomofo)%"
+                let variantSearch = "（%\(query.base)%"
                 sqlite3_bind_text(stmt, 2, (variantSearch as NSString).utf8String, -1, nil)
             }
             
-            let prefixCount = prefix.count
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let idiom = readColumn(stmt, 0)
                 let phonetic = readColumn(stmt, 1)
@@ -223,25 +266,52 @@ class DatabaseManager {
                 let syllables = BopomofoSplitter.split(phonetic: phonetic, count: chars.count)
                 if prefixCount >= syllables.count { continue }
                 let syllable = syllables[prefixCount]
+                let quality: Int?
                 if matchesBopomofo(syllable, bopomofo) {
-                    rawResults.append(String(chars[prefixCount]))
+                    quality = 0
                 } else if queryHasTone && matchesBopomofoIgnoringTone(syllable, bopomofo) {
-                    fallbackResults.append(String(chars[prefixCount]))
+                    quality = 1
+                } else {
+                    quality = nil
                 }
+                guard let quality else { continue }
+
+                let candidate = String(chars[prefixCount])
+                var ranking = candidateMap[candidate] ?? RankedContextCandidate(
+                    word: candidate,
+                    quality: quality,
+                    exactHits: 0,
+                    fallbackHits: 0,
+                    shortestIdiomLength: chars.count,
+                    dictionaryRank: dictionaryRankMap[candidate] ?? Int.max
+                )
+                ranking.quality = min(ranking.quality, quality)
+                ranking.shortestIdiomLength = min(ranking.shortestIdiomLength, chars.count)
+                ranking.dictionaryRank = min(ranking.dictionaryRank, dictionaryRankMap[candidate] ?? Int.max)
+                if quality == 0 {
+                    ranking.exactHits += 1
+                } else {
+                    ranking.fallbackHits += 1
+                }
+                candidateMap[candidate] = ranking
             }
         }
         sqlite3_finalize(stmt)
-        
-        let primary = NSOrderedSet(array: rawResults).array as? [String] ?? []
-        if !primary.isEmpty { return primary }
-        return NSOrderedSet(array: fallbackResults).array as? [String] ?? []
+
+        return candidateMap.values
+            .sorted(by: compareContextCandidates)
+            .map(\.word)
     }
 
     // Fallback: match any position to mimic general IME character lookup
     func searchByPhoneticAnyPosition(_ bopomofo: String) -> [String] {
-        var rawResults: [String] = []
         guard let db = db else { return [] }
         if bopomofo.isEmpty { return [] }
+        let query = parseBopomofoQuery(bopomofo)
+        if query.base.isEmpty { return [] }
+        let queryHasTone = query.tone != nil
+        let dictionaryRankMap = buildDictionaryRankMap(for: bopomofo)
+        var candidateMap: [String: RankedContextCandidate] = [:]
 
         let idiomExpr = normalizedIdiomExpr(alias: "d")
         let phoneticExpr = normalizedPhoneticExpr(alias: "d")
@@ -256,9 +326,9 @@ class DatabaseManager {
 
         var stmt: OpaquePointer?
         if sqlite3_prepare_v2(db, querySQL, -1, &stmt, nil) == SQLITE_OK {
-            let searchString = "%\(bopomofo)%"
+            let searchString = "%\(query.base)%"
             sqlite3_bind_text(stmt, 1, (searchString as NSString).utf8String, -1, nil)
-            let variantSearch = "（%\(bopomofo)%"
+            let variantSearch = "（%\(query.base)%"
             sqlite3_bind_text(stmt, 2, (variantSearch as NSString).utf8String, -1, nil)
 
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -269,71 +339,47 @@ class DatabaseManager {
                 let syllables = BopomofoSplitter.split(phonetic: phonetic, count: chars.count)
                 if syllables.isEmpty { continue }
                 for index in 0..<min(chars.count, syllables.count) {
+                    let quality: Int?
                     if matchesBopomofo(syllables[index], bopomofo) {
-                        rawResults.append(String(chars[index]))
+                        quality = 0
+                    } else if queryHasTone && matchesBopomofoIgnoringTone(syllables[index], bopomofo) {
+                        quality = 1
+                    } else {
+                        quality = nil
                     }
+                    guard let quality else { continue }
+
+                    let candidate = String(chars[index])
+                    var ranking = candidateMap[candidate] ?? RankedContextCandidate(
+                        word: candidate,
+                        quality: quality,
+                        exactHits: 0,
+                        fallbackHits: 0,
+                        shortestIdiomLength: chars.count,
+                        dictionaryRank: dictionaryRankMap[candidate] ?? Int.max
+                    )
+                    ranking.quality = min(ranking.quality, quality)
+                    ranking.shortestIdiomLength = min(ranking.shortestIdiomLength, chars.count)
+                    ranking.dictionaryRank = min(ranking.dictionaryRank, dictionaryRankMap[candidate] ?? Int.max)
+                    if quality == 0 {
+                        ranking.exactHits += 1
+                    } else {
+                        ranking.fallbackHits += 1
+                    }
+                    candidateMap[candidate] = ranking
                 }
             }
         }
         sqlite3_finalize(stmt)
 
-        return NSOrderedSet(array: rawResults).array as? [String] ?? []
+        return candidateMap.values
+            .sorted(by: compareContextCandidates)
+            .map(\.word)
     }
 
     // Character dictionary lookup (single characters)
     func searchCharByPhonetic(_ bopomofo: String) -> [String] {
-        var rawResults: [String] = []
-        var fallbackResults: [String] = []
-        guard let db = db else { return [] }
-        if bopomofo.isEmpty || !hasCharDictTable { return [] }
-
-        let query = parseBopomofoQuery(bopomofo)
-        if query.base.isEmpty { return [] }
-        let queryHasTone = query.tone != nil
-
-        let sql = """
-            SELECT word, phonetic, variant_phonetic
-            FROM char_dict
-            WHERE phonetic LIKE ?
-               OR variant_phonetic LIKE ?
-            LIMIT 1200;
-        """
-
-        var stmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-            let likeString = "\(query.base)%"
-            sqlite3_bind_text(stmt, 1, (likeString as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (likeString as NSString).utf8String, -1, nil)
-
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let word = readColumn(stmt, 0)
-                let phonetic = readColumn(stmt, 1)
-                let variant = readColumn(stmt, 2)
-                if word.isEmpty { continue }
-                let primary = BopomofoSplitter.normalizeForSyllables(phonetic)
-                if matchesBopomofo(primary, bopomofo) {
-                    rawResults.append(word)
-                    continue
-                } else if queryHasTone && matchesBopomofoIgnoringTone(primary, bopomofo) {
-                    fallbackResults.append(word)
-                    continue
-                }
-                if !variant.isEmpty {
-                    let alt = BopomofoSplitter.normalizeForSyllables(variant)
-                    if matchesBopomofo(alt, bopomofo) {
-                        rawResults.append(word)
-                        continue
-                    } else if queryHasTone && matchesBopomofoIgnoringTone(alt, bopomofo) {
-                        fallbackResults.append(word)
-                    }
-                }
-            }
-        }
-        sqlite3_finalize(stmt)
-
-        let primary = NSOrderedSet(array: rawResults).array as? [String] ?? []
-        if !primary.isEmpty { return primary }
-        return NSOrderedSet(array: fallbackResults).array as? [String] ?? []
+        return rankedCharCandidates(for: bopomofo).map(\.word)
     }
     
     // MARK: - History (歷史紀錄)
@@ -575,6 +621,114 @@ class DatabaseManager {
     private func readColumn(_ stmt: OpaquePointer?, _ index: Int) -> String {
         guard let ptr = sqlite3_column_text(stmt, Int32(index)) else { return "" }
         return String(cString: ptr)
+    }
+
+    private func rankedCharCandidates(for bopomofo: String) -> [RankedCharCandidate] {
+        guard let db = db else { return [] }
+        if bopomofo.isEmpty || !hasCharDictTable { return [] }
+
+        let query = parseBopomofoQuery(bopomofo)
+        if query.base.isEmpty { return [] }
+        let queryHasTone = query.tone != nil
+        var bestMatches: [String: RankedCharCandidate] = [:]
+
+        let sql = """
+            SELECT word, phonetic, variant_phonetic, polyphonic_order, stroke_count, word_id
+            FROM char_dict
+            WHERE phonetic LIKE ?
+               OR variant_phonetic LIKE ?
+            LIMIT 1600;
+        """
+
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            let likeString = "\(query.base)%"
+            sqlite3_bind_text(stmt, 1, (likeString as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (likeString as NSString).utf8String, -1, nil)
+
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let word = readColumn(stmt, 0)
+                let phonetic = readColumn(stmt, 1)
+                let variant = readColumn(stmt, 2)
+                if word.isEmpty { continue }
+
+                let primary = BopomofoSplitter.normalizeForSyllables(phonetic)
+                let alternate = BopomofoSplitter.normalizeForSyllables(variant)
+                var quality: Int?
+
+                if matchesBopomofo(primary, bopomofo) {
+                    quality = 0
+                } else if !alternate.isEmpty && matchesBopomofo(alternate, bopomofo) {
+                    quality = 1
+                } else if queryHasTone && matchesBopomofoIgnoringTone(primary, bopomofo) {
+                    quality = 2
+                } else if queryHasTone && !alternate.isEmpty && matchesBopomofoIgnoringTone(alternate, bopomofo) {
+                    quality = 3
+                }
+
+                guard let quality else { continue }
+
+                let polyphonicOrder = Int(sqlite3_column_int(stmt, 3))
+                let strokeCount = Int(sqlite3_column_int(stmt, 4))
+                let wordID = Int(readColumn(stmt, 5)) ?? Int.max
+                let candidate = RankedCharCandidate(
+                    word: word,
+                    quality: quality,
+                    dictionaryOrder: wordID,
+                    polyphonicOrder: polyphonicOrder,
+                    strokeCount: strokeCount
+                )
+
+                if let existing = bestMatches[word] {
+                    if compareCharCandidates(candidate, existing) {
+                        bestMatches[word] = candidate
+                    }
+                } else {
+                    bestMatches[word] = candidate
+                }
+            }
+        }
+        sqlite3_finalize(stmt)
+
+        return bestMatches.values.sorted(by: compareCharCandidates)
+    }
+
+    private func buildDictionaryRankMap(for bopomofo: String) -> [String: Int] {
+        var map: [String: Int] = [:]
+        for (index, candidate) in rankedCharCandidates(for: bopomofo).enumerated() {
+            map[candidate.word] = index
+        }
+        return map
+    }
+
+    private func compareCharCandidates(_ lhs: RankedCharCandidate, _ rhs: RankedCharCandidate) -> Bool {
+        if lhs.quality != rhs.quality { return lhs.quality < rhs.quality }
+        if lhs.dictionaryOrder != rhs.dictionaryOrder { return lhs.dictionaryOrder < rhs.dictionaryOrder }
+        if lhs.polyphonicOrder != rhs.polyphonicOrder { return lhs.polyphonicOrder < rhs.polyphonicOrder }
+        if lhs.strokeCount != rhs.strokeCount { return lhs.strokeCount < rhs.strokeCount }
+        return lhs.word < rhs.word
+    }
+
+    private func compareContextCandidates(_ lhs: RankedContextCandidate, _ rhs: RankedContextCandidate) -> Bool {
+        if lhs.quality != rhs.quality { return lhs.quality < rhs.quality }
+        if lhs.exactHits != rhs.exactHits { return lhs.exactHits > rhs.exactHits }
+        if lhs.fallbackHits != rhs.fallbackHits { return lhs.fallbackHits > rhs.fallbackHits }
+        if lhs.shortestIdiomLength != rhs.shortestIdiomLength { return lhs.shortestIdiomLength < rhs.shortestIdiomLength }
+        if lhs.dictionaryRank != rhs.dictionaryRank { return lhs.dictionaryRank < rhs.dictionaryRank }
+        return lhs.word < rhs.word
+    }
+
+    private func mergeCandidateLists(_ lists: [String]..., limit: Int) -> [String] {
+        var merged: [String] = []
+        var seen = Set<String>()
+        for list in lists {
+            for item in list where !item.isEmpty && !seen.contains(item) {
+                seen.insert(item)
+                merged.append(item)
+                if merged.count >= limit { return merged }
+            }
+        }
+        return merged
     }
 
     private func detectSchema() {

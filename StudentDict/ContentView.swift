@@ -121,13 +121,7 @@ struct ZhuyinIME {
         let currentBopomofo = extractLastBopomofo(from: input)
         if currentBopomofo.isEmpty { return [] }
         let committedText = extractCommittedText(from: input)
-        if committedText.isEmpty {
-            let chars = DatabaseManager.shared.searchCharByPhonetic(currentBopomofo)
-            if !chars.isEmpty { return chars }
-            return DatabaseManager.shared.searchByPhonetic(currentBopomofo, prefix: "")
-        }
-        let primary = DatabaseManager.shared.searchByPhonetic(currentBopomofo, prefix: committedText)
-        return primary
+        return DatabaseManager.shared.keyboardCandidates(for: currentBopomofo, prefix: committedText)
     }
     private func extractLastBopomofo(from text: String) -> String {
         var result = ""
@@ -248,8 +242,6 @@ struct ContentView: View {
                                                 Button(action: {
                                                     if !searchText.isEmpty {
                                                         searchText.removeLast()
-                                                        if searchText.isEmpty { results = [] }
-                                                        else { performSearch(keyword: searchText) }
                                                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                                     }
                                                 }) {
@@ -337,7 +329,7 @@ struct ContentView: View {
                             .safeAreaInset(edge: .bottom, spacing: 0) {
                                 VStack(spacing: 0) {
                                     if showCustomKeyboard {
-                                        ZhuyinKeyboardView(text: $searchText, compact: useCompactKeyboard, onUpdate: { performSearch(keyword: searchText) })
+                                        ZhuyinKeyboardView(text: $searchText, compact: useCompactKeyboard, onUpdate: {})
                                             .frame(maxHeight: .infinity, alignment: .top)
                                             .fixedSize(horizontal: false, vertical: true)
                                             .frame(maxWidth: isPad ? 640 : .infinity)
@@ -371,9 +363,29 @@ struct ContentView: View {
                     .navigationBarHidden(true)
                     .sheet(isPresented: $showLicense) { LicenseView() }
                     .onChange(of: selectedTab) { _ in loadData() }
-                    .onChange(of: speechInput.transcribedText) { _, val in if !val.isEmpty { searchText = val; performSearch(keyword: val) } }
-                    .onChange(of: searchText) { _, val in performSearch(keyword: val) }
+                    .onChange(of: speechInput.transcribedText) { _, val in
+                        if !val.isEmpty { searchText = val }
+                    }
                     .onAppear { loadData(); requestIDFA() }
+                    .task(id: searchText) {
+                        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !keyword.isEmpty else {
+                            results = []
+                            return
+                        }
+
+                        try? await Task.sleep(nanoseconds: 120_000_000)
+                        guard !Task.isCancelled else { return }
+
+                        let fetched = await Task.detached(priority: .userInitiated) {
+                            DatabaseManager.shared.search(keyword: keyword)
+                        }.value
+
+                        guard !Task.isCancelled else { return }
+                        if searchText.trimmingCharacters(in: .whitespacesAndNewlines) == keyword {
+                            results = fetched
+                        }
+                    }
                     .alert(isPresented: $showAlert) { Alert(title: Text("提示"), message: Text(alertMessage), dismissButton: .default(Text("好"))) }
                 }
                 .navigationViewStyle(StackNavigationViewStyle())
@@ -441,10 +453,6 @@ struct ContentView: View {
         }
     }
     
-    func performSearch(keyword: String) {
-        if !keyword.isEmpty { results = DatabaseManager.shared.search(keyword: keyword) } else { results = [] }
-    }
-    
     func loadData() {
         historyItems = DatabaseManager.shared.getHistory()
         favoriteItems = DatabaseManager.shared.getFavorites()
@@ -490,14 +498,6 @@ struct DetailView: View {
                         } else {
                             VStack(spacing: 12) {
                                 IdiomBreakdownView(idiom: item.idiom, phonetic: item.phonetic)
-                                if !displayPhonetic.isEmpty {
-                                    Text(displayPhonetic)
-                                        .font(.system(size: 18, weight: .semibold))
-                                        .foregroundColor(.white)
-                                        .padding(.vertical, 6).padding(.horizontal, 16)
-                                        .background(Capsule().fill(Color.orange))
-                                        .shadow(color: .orange.opacity(0.3), radius: 3, x: 0, y: 2)
-                                }
                             }
                             .padding(.vertical, 10)
                         }
@@ -1196,7 +1196,7 @@ struct ZhuyinKeyboardView: View {
     var candidateWidth: CGFloat { useCompact ? 64 : 90 }
     var candidateHeight: CGFloat { useCompact ? 34 : 44 }
     var candidateRowHeight: CGFloat { useCompact ? 44 : 56 }
-    var toneSymbolSize: CGFloat { useCompact ? 15 : 24 }
+    var toneSymbolSize: CGFloat { useCompact ? 19 : 26 }
     var toneNameSize: CGFloat { useCompact ? 9 : 11 }
     var toneButtonHeight: CGFloat { useCompact ? keyMinHeight : 44 }
     var deleteButtonWidth: CGFloat { useCompact ? 48 : 60 }
@@ -1290,7 +1290,7 @@ struct ZhuyinKeyboardView: View {
                             UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                         }) {
                             VStack(spacing: 0) {
-                                Text(item.symbol).font(.system(size: toneSymbolSize, weight: .bold)).frame(height: useCompact ? 22 : 26)
+                                Text(item.symbol).font(.system(size: toneSymbolSize, weight: .bold)).frame(height: useCompact ? 24 : 28)
                                 Text(item.name).font(.system(size: toneNameSize, weight: .regular)).padding(.bottom, 2)
                             }
                             // [iPad 優化]: 聲調按鍵增高
@@ -1333,16 +1333,26 @@ struct ZhuyinKeyboardView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity)).zIndex(100)
             }
         }
-        .onChange(of: text) { _, _ in updateCandidates() }
-        .onAppear { updateCandidates() }
+        .task(id: text) {
+            let input = text
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            guard !Task.isCancelled else { return }
+
+            let new = await Task.detached(priority: .userInitiated) {
+                ZhuyinIME.shared.getCandidates(for: input)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            if text == input {
+                candidates = new
+                if new.isEmpty {
+                    withAnimation(.spring()) { showExpandedCandidates = false }
+                }
+            }
+        }
     }
     
     // (Helper functions)
-    private func updateCandidates() {
-        let new = ZhuyinIME.shared.getCandidates(for: text)
-        self.candidates = new
-        if new.isEmpty { withAnimation(.spring()) { showExpandedCandidates = false } }
-    }
     private func selectChar(_ char: String) {
         while let last = text.last, BopomofoData.isBopomofo(last) { text.removeLast() }
         text += char
