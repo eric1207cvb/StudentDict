@@ -1,6 +1,6 @@
 import Foundation
 
-struct BopomofoData {
+nonisolated struct BopomofoData {
     static let initials = ["ㄅ", "ㄆ", "ㄇ", "ㄈ", "ㄉ", "ㄊ", "ㄋ", "ㄌ", "ㄍ", "ㄎ", "ㄏ", "ㄐ", "ㄑ", "ㄒ", "ㄓ", "ㄔ", "ㄕ", "ㄖ", "ㄗ", "ㄘ", "ㄙ"]
     static let medials = ["ㄧ", "ㄨ", "ㄩ"]
     static let finals = ["ㄚ", "ㄛ", "ㄜ", "ㄝ", "ㄞ", "ㄟ", "ㄠ", "ㄡ", "ㄢ", "ㄣ", "ㄤ", "ㄥ", "ㄦ"]
@@ -9,7 +9,7 @@ struct BopomofoData {
     static func isBopomofo(_ char: Character) -> Bool { return all.contains(String(char)) }
 }
 
-class BopomofoSplitter {
+nonisolated class BopomofoSplitter {
     static func split(phonetic: String, count: Int) -> [String] {
         let normalized = normalizeForSyllables(phonetic)
         let parts = normalized.components(separatedBy: " ")

@@ -44,12 +44,17 @@ class PurchaseManager: ObservableObject {
         }
     }
 
-    func updatePremiumStatus(with info: CustomerInfo?) {
-        guard let info = info else { return }
+    func hasPremiumAccess(_ info: CustomerInfo?) -> Bool {
+        guard let info = info else { return false }
         let hasEntitlement = info.entitlements[entitlementId]?.isActive == true
         let hasNonConsumable = info.allPurchasedProductIdentifiers.contains(removeAdsProductId)
+        return hasEntitlement || hasNonConsumable
+    }
+
+    func updatePremiumStatus(with info: CustomerInfo?) {
+        let hasPremiumAccess = hasPremiumAccess(info)
         DispatchQueue.main.async {
-            self.isPremium = hasEntitlement || hasNonConsumable
+            self.isPremium = hasPremiumAccess
         }
     }
 }

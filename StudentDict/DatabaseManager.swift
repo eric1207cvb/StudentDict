@@ -30,11 +30,15 @@ struct DictItem: Identifiable, Hashable {
 }
 
 // MARK: - 2. Database Manager
-class DatabaseManager {
+nonisolated final class DatabaseManager: @unchecked Sendable {
     static let shared = DatabaseManager()
+    private let dbQueue = DispatchQueue(label: "tw.yian.IdiomDict.DatabaseManager")
+    private let dbQueueKey = DispatchSpecificKey<Void>()
+    private let bundleSignatureDefaultsKey = "tw.yian.IdiomDict.dictionaryBundleSignature"
     private var db: OpaquePointer?
     private var hasExtendedColumns = false
     private var hasCharDictTable = false
+    private var pendingUserDataSnapshot: UserDataSnapshot?
     
     // 設定最大收藏數量
     private let maxFavoritesCount = 30
@@ -55,10 +59,26 @@ class DatabaseManager {
         var shortestIdiomLength: Int
         var dictionaryRank: Int
     }
+
+    private struct UserDataSnapshot {
+        let favorites: [String]
+        let history: [(word: String, timestamp: Double)]
+    }
     
     private init() {
-        openDatabase()
-        createTables()
+        dbQueue.setSpecific(key: dbQueueKey, value: ())
+        withDatabase {
+            openDatabase()
+            createTables()
+            restorePendingUserDataIfNeeded()
+        }
+    }
+
+    private func withDatabase<T>(_ work: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: dbQueueKey) != nil {
+            return work()
+        }
+        return dbQueue.sync(execute: work)
     }
     
     // MARK: - Database Setup (關鍵修正：複製到可寫入目錄)
@@ -73,12 +93,14 @@ class DatabaseManager {
     private func openDatabase() {
         let writablePath = getWritableDBPath()
         let fileManager = FileManager.default
+        let bundlePath = Bundle.main.path(forResource: "dictionary", ofType: "sqlite")
+        let bundleSignature = bundlePath.flatMap { databaseSignature(atPath: $0) }
         
         // 1. 檢查可寫入目錄是否存在資料庫
         if !fileManager.fileExists(atPath: writablePath) {
             print("📂 初次執行，準備將資料庫從 Bundle 複製到 Documents...")
             // 如果不存在，從 App Bundle 中尋找原始檔案
-            guard let bundlePath = Bundle.main.path(forResource: "dictionary", ofType: "sqlite") else {
+            guard let bundlePath = bundlePath else {
                 print("❌ Fatal Error: 在 Bundle 中找不到 dictionary.sqlite 原始檔！請確認檔案有加入專案。")
                 return
             }
@@ -86,12 +108,20 @@ class DatabaseManager {
             // 嘗試複製
             do {
                 try fileManager.copyItem(atPath: bundlePath, toPath: writablePath)
+                saveBundleSignature(bundleSignature)
                 print("✅ 資料庫複製成功！路徑: \(writablePath)")
             } catch {
                 print("❌ 資料庫複製失敗: \(error)")
                 return
             }
         } else {
+            if shouldRefreshWritableDatabase(bundleSignature: bundleSignature, bundlePath: bundlePath, writablePath: writablePath),
+               let bundlePath = bundlePath,
+               migrateWritableDatabase(fromBundlePath: bundlePath, toWritablePath: writablePath) {
+                saveBundleSignature(bundleSignature)
+            } else if savedBundleSignature() == nil {
+                saveBundleSignature(bundleSignature)
+            }
             print("📂 資料庫已存在於可寫入目錄，直接使用。")
         }
         
@@ -107,6 +137,179 @@ class DatabaseManager {
             detectSchema()
         }
     }
+
+    private func databaseSignature(atPath path: String) -> String? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let size = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        let modifiedAt = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(size.int64Value)-\(Int(modifiedAt))"
+    }
+
+    private func savedBundleSignature() -> String? {
+        UserDefaults.standard.string(forKey: bundleSignatureDefaultsKey)
+    }
+
+    private func saveBundleSignature(_ signature: String?) {
+        guard let signature else { return }
+        UserDefaults.standard.set(signature, forKey: bundleSignatureDefaultsKey)
+    }
+
+    private func shouldRefreshWritableDatabase(bundleSignature: String?, bundlePath: String?, writablePath: String) -> Bool {
+        guard let bundleSignature else {
+            return false
+        }
+        if let savedSignature = savedBundleSignature() {
+            return savedSignature != bundleSignature
+        }
+        guard let bundlePath,
+              let bundleContentSignature = dictionaryContentSignature(atPath: bundlePath),
+              let writableContentSignature = dictionaryContentSignature(atPath: writablePath) else {
+            return false
+        }
+        return bundleContentSignature != writableContentSignature
+    }
+
+    private func dictionaryContentSignature(atPath path: String) -> String? {
+        var signatureDB: OpaquePointer?
+        guard sqlite3_open(path, &signatureDB) == SQLITE_OK else {
+            sqlite3_close(signatureDB)
+            return nil
+        }
+        defer { sqlite3_close(signatureDB) }
+
+        let idiomSignature = aggregateSignature(
+            db: signatureDB,
+            sql: """
+                SELECT COUNT(*),
+                       IFNULL(SUM(LENGTH(idiom)), 0),
+                       IFNULL(SUM(LENGTH(phonetic)), 0),
+                       IFNULL(SUM(LENGTH(definition)), 0),
+                       IFNULL(SUM(LENGTH(example)), 0)
+                FROM idiom_dict;
+            """
+        ) ?? "idiom:missing"
+        let charSignature = aggregateSignature(
+            db: signatureDB,
+            sql: """
+                SELECT COUNT(*),
+                       IFNULL(SUM(LENGTH(word)), 0),
+                       IFNULL(SUM(LENGTH(phonetic)), 0),
+                       IFNULL(SUM(LENGTH(variant_phonetic)), 0),
+                       IFNULL(SUM(CAST(word_id AS INTEGER)), 0)
+                FROM char_dict;
+            """
+        ) ?? "char:missing"
+        return "\(idiomSignature)|\(charSignature)"
+    }
+
+    private func aggregateSignature(db: OpaquePointer?, sql: String) -> String? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqlite3_finalize(stmt)
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else {
+            return nil
+        }
+        var values: [String] = []
+        for index in 0..<sqlite3_column_count(stmt) {
+            values.append(readColumn(stmt, Int(index)))
+        }
+        return values.joined(separator: ":")
+    }
+
+    private func migrateWritableDatabase(fromBundlePath bundlePath: String, toWritablePath writablePath: String) -> Bool {
+        let fileManager = FileManager.default
+        let backupPath = "\(writablePath).backup"
+        let snapshot = readUserDataSnapshot(fromPath: writablePath)
+
+        do {
+            if fileManager.fileExists(atPath: backupPath) {
+                try fileManager.removeItem(atPath: backupPath)
+            }
+            try fileManager.moveItem(atPath: writablePath, toPath: backupPath)
+            try fileManager.copyItem(atPath: bundlePath, toPath: writablePath)
+            pendingUserDataSnapshot = snapshot
+            try? fileManager.removeItem(atPath: backupPath)
+            print("✅ 字典資料庫已更新，使用者收藏與歷史紀錄將保留。")
+            return true
+        } catch {
+            if !fileManager.fileExists(atPath: writablePath),
+               fileManager.fileExists(atPath: backupPath) {
+                try? fileManager.moveItem(atPath: backupPath, toPath: writablePath)
+            }
+            print("❌ 字典資料庫更新失敗: \(error)")
+            return false
+        }
+    }
+
+    private func readUserDataSnapshot(fromPath path: String) -> UserDataSnapshot {
+        var favorites: [String] = []
+        var history: [(word: String, timestamp: Double)] = []
+        var snapshotDB: OpaquePointer?
+
+        guard sqlite3_open(path, &snapshotDB) == SQLITE_OK else {
+            sqlite3_close(snapshotDB)
+            return UserDataSnapshot(favorites: favorites, history: history)
+        }
+        defer { sqlite3_close(snapshotDB) }
+
+        var favoriteStmt: OpaquePointer?
+        if sqlite3_prepare_v2(snapshotDB, "SELECT word FROM favorites ORDER BY rowid ASC;", -1, &favoriteStmt, nil) == SQLITE_OK {
+            while sqlite3_step(favoriteStmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(favoriteStmt, 0) {
+                    favorites.append(String(cString: ptr))
+                }
+            }
+        }
+        sqlite3_finalize(favoriteStmt)
+
+        var historyStmt: OpaquePointer?
+        if sqlite3_prepare_v2(snapshotDB, "SELECT word, timestamp FROM history ORDER BY timestamp DESC;", -1, &historyStmt, nil) == SQLITE_OK {
+            while sqlite3_step(historyStmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(historyStmt, 0) {
+                    history.append((word: String(cString: ptr), timestamp: sqlite3_column_double(historyStmt, 1)))
+                }
+            }
+        }
+        sqlite3_finalize(historyStmt)
+
+        return UserDataSnapshot(favorites: favorites, history: history)
+    }
+
+    private func restorePendingUserDataIfNeeded() {
+        guard let snapshot = pendingUserDataSnapshot,
+              let db = db else { return }
+        pendingUserDataSnapshot = nil
+
+        let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+        var favoriteStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "INSERT OR IGNORE INTO favorites (word) VALUES (?);", -1, &favoriteStmt, nil) == SQLITE_OK {
+            for word in snapshot.favorites {
+                sqlite3_reset(favoriteStmt)
+                sqlite3_clear_bindings(favoriteStmt)
+                sqlite3_bind_text(favoriteStmt, 1, (word as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_step(favoriteStmt)
+            }
+        }
+        sqlite3_finalize(favoriteStmt)
+
+        var historyStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO history (word, timestamp) VALUES (?, ?);", -1, &historyStmt, nil) == SQLITE_OK {
+            for item in snapshot.history {
+                sqlite3_reset(historyStmt)
+                sqlite3_clear_bindings(historyStmt)
+                sqlite3_bind_text(historyStmt, 1, (item.word as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_double(historyStmt, 2, item.timestamp)
+                sqlite3_step(historyStmt)
+            }
+        }
+        sqlite3_finalize(historyStmt)
+    }
     
     private func createTables() {
         guard let db = db else { return }
@@ -118,6 +321,7 @@ class DatabaseManager {
     
     // MARK: - 🔍 主搜尋 (成語：字首匹配 + 定義/近義包含)
     func search(keyword: String) -> [DictItem] {
+        return withDatabase {
         var result: [DictItem] = []
         guard let db = db else { return [] }
         let idiomExpr = normalizedIdiomExpr(alias: "d")
@@ -128,6 +332,8 @@ class DatabaseManager {
         let exampleExpr = normalizedExampleExpr(alias: "d")
         let antonymsExpr = normalizedAntonymsExpr(alias: "d")
         let prefixOnly = isCJKPrefixQuery(keyword)
+        let bopomofoQuery = parseBopomofoQuery(keyword)
+        let isBopomofoKeyword = isBopomofoText(keyword) && !bopomofoQuery.base.isEmpty
 
         let querySQL: String
         if prefixOnly {
@@ -135,6 +341,21 @@ class DatabaseManager {
                 SELECT \(selectColumns(idiomExpr: idiomExpr, phoneticExpr: phoneticExpr, definitionExpr: definitionExpr, sourceExpr: sourceExpr, exampleExpr: exampleExpr, synonymsExpr: synonymsExpr, antonymsExpr: antonymsExpr, alias: "d"))
                 FROM idiom_dict d
                 WHERE \(idiomExpr) LIKE ?
+                ORDER BY
+                  CASE
+                    WHEN \(idiomExpr) = ? THEN 0
+                    ELSE 1
+                  END ASC,
+                  length(\(idiomExpr)) ASC
+                LIMIT 100;
+            """
+        } else if isBopomofoKeyword {
+            querySQL = """
+                SELECT \(selectColumns(idiomExpr: idiomExpr, phoneticExpr: phoneticExpr, definitionExpr: definitionExpr, sourceExpr: sourceExpr, exampleExpr: exampleExpr, synonymsExpr: synonymsExpr, antonymsExpr: antonymsExpr, alias: "d"))
+                FROM idiom_dict d
+                WHERE \(phoneticExpr) LIKE ?
+                   OR \(phoneticExpr) LIKE ?
+                   OR \(phoneticExpr) LIKE ?
                 ORDER BY
                   CASE
                     WHEN \(idiomExpr) = ? THEN 0
@@ -172,6 +393,14 @@ class DatabaseManager {
             if prefixOnly {
                 // 2. 排序用：完全匹配
                 sqlite3_bind_text(stmt, 2, nsKeyword.utf8String, -1, SQLITE_TRANSIENT)
+            } else if isBopomofoKeyword {
+                let phoneticBaseKeyword = "\(bopomofoQuery.base)%"
+                let leadingLightToneKeyword = "˙\(bopomofoQuery.base)%"
+                let variantKeyword = "（%\(bopomofoQuery.base)%"
+                sqlite3_bind_text(stmt, 1, (phoneticBaseKeyword as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 2, (leadingLightToneKeyword as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 3, (variantKeyword as NSString).utf8String, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 4, nsKeyword.utf8String, -1, SQLITE_TRANSIENT)
             } else {
                 let containsKeyword = "%\(keyword)%"
                 // 2. 注音字首
@@ -184,15 +413,20 @@ class DatabaseManager {
             }
             
             while sqlite3_step(stmt) == SQLITE_ROW {
-                result.append(parseRow(stmt: stmt))
+                let item = parseRow(stmt: stmt)
+                if shouldIncludeSearchResult(item, forBopomofoKeyword: keyword, isBopomofoKeyword: isBopomofoKeyword) {
+                    result.append(item)
+                }
             }
         }
         sqlite3_finalize(stmt)
         return result
+        }
     }
     
     // MARK: - ⌨️ 鍵盤候選字搜尋
     func keyboardCandidates(for bopomofo: String, prefix: String) -> [String] {
+        return withDatabase {
         let trimmedPrefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedPrefix.isEmpty {
             return mergeCandidateLists(
@@ -214,9 +448,11 @@ class DatabaseManager {
             searchByPhoneticAnyPosition(bopomofo),
             limit: 60
         )
+        }
     }
 
     func searchByPhonetic(_ bopomofo: String, prefix: String) -> [String] {
+        return withDatabase {
         guard let db = db else { return [] }
         if bopomofo.isEmpty { return [] }
         let query = parseBopomofoQuery(bopomofo)
@@ -237,6 +473,7 @@ class DatabaseManager {
                 FROM idiom_dict d
                 WHERE \(phoneticExpr) LIKE ?
                    OR \(phoneticExpr) LIKE ?
+                   OR \(phoneticExpr) LIKE ?
                 LIMIT 2000;
             """
         } else {
@@ -256,6 +493,8 @@ class DatabaseManager {
             if prefix.isEmpty {
                 let variantSearch = "（%\(query.base)%"
                 sqlite3_bind_text(stmt, 2, (variantSearch as NSString).utf8String, -1, nil)
+                let leadingLightToneSearch = "˙\(query.base)%"
+                sqlite3_bind_text(stmt, 3, (leadingLightToneSearch as NSString).utf8String, -1, nil)
             }
             
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -301,10 +540,12 @@ class DatabaseManager {
         return candidateMap.values
             .sorted(by: compareContextCandidates)
             .map(\.word)
+        }
     }
 
     // Fallback: match any position to mimic general IME character lookup
     func searchByPhoneticAnyPosition(_ bopomofo: String) -> [String] {
+        return withDatabase {
         guard let db = db else { return [] }
         if bopomofo.isEmpty { return [] }
         let query = parseBopomofoQuery(bopomofo)
@@ -375,15 +616,19 @@ class DatabaseManager {
         return candidateMap.values
             .sorted(by: compareContextCandidates)
             .map(\.word)
+        }
     }
 
     // Character dictionary lookup (single characters)
     func searchCharByPhonetic(_ bopomofo: String) -> [String] {
+        return withDatabase {
         return rankedCharCandidates(for: bopomofo).map(\.word)
+        }
     }
     
     // MARK: - History (歷史紀錄)
     func addToHistory(idiom: String) {
+        withDatabase {
         guard let db = db else { return }
         let timestamp = Date().timeIntervalSince1970
         let insertSQL = "INSERT OR REPLACE INTO history (word, timestamp) VALUES (?, ?);"
@@ -396,9 +641,11 @@ class DatabaseManager {
         sqlite3_finalize(stmt)
         // 保持歷史紀錄最新的 50 筆
         sqlite3_exec(db, "DELETE FROM history WHERE word NOT IN (SELECT word FROM history ORDER BY timestamp DESC LIMIT 50);", nil, nil, nil)
+        }
     }
     
     func getHistory() -> [DictItem] {
+        return withDatabase {
         var result: [DictItem] = []
         guard let db = db else { return [] }
         let idiomExpr = normalizedIdiomExpr(alias: "d")
@@ -422,17 +669,21 @@ class DatabaseManager {
         }
         sqlite3_finalize(stmt)
         return result
+        }
     }
     
     func clearHistory() {
+        withDatabase {
         guard let db = db else { return }
         sqlite3_exec(db, "DELETE FROM history;", nil, nil, nil)
+        }
     }
     
     // MARK: - Favorites (收藏 - 限制 30 筆)
     
     /// 切換收藏狀態：若已收藏則刪除，若未收藏則加入 (若滿 30 筆則刪除最舊的)
     func toggleFavorite(idiom: String) -> Bool {
+        return withDatabase {
         guard let db = db else {
             print("❌ DB Error: 資料庫未連接")
             return false
@@ -500,9 +751,11 @@ class DatabaseManager {
             
             return true // 回傳 true 代表現在「已收藏」
         }
+        }
     }
     
     func isFavorite(idiom: String) -> Bool {
+        return withDatabase {
         guard let db = db else { return false }
         let sql = "SELECT count(*) FROM favorites WHERE word = ?;"
         var stmt: OpaquePointer?
@@ -515,10 +768,12 @@ class DatabaseManager {
         }
         sqlite3_finalize(stmt)
         return count > 0
+        }
     }
     
     // 取得所有收藏列表 (UI 需要此函式)
     func getFavorites() -> [DictItem] {
+        return withDatabase {
         var result: [DictItem] = []
         guard let db = db else { return [] }
         
@@ -544,6 +799,7 @@ class DatabaseManager {
         }
         sqlite3_finalize(stmt)
         return result
+        }
     }
     
     // MARK: - Helper
@@ -637,6 +893,8 @@ class DatabaseManager {
             FROM char_dict
             WHERE phonetic LIKE ?
                OR variant_phonetic LIKE ?
+               OR phonetic LIKE ?
+               OR variant_phonetic LIKE ?
             LIMIT 1600;
         """
 
@@ -645,6 +903,9 @@ class DatabaseManager {
             let likeString = "\(query.base)%"
             sqlite3_bind_text(stmt, 1, (likeString as NSString).utf8String, -1, nil)
             sqlite3_bind_text(stmt, 2, (likeString as NSString).utf8String, -1, nil)
+            let leadingLightToneString = "˙\(query.base)%"
+            sqlite3_bind_text(stmt, 3, (leadingLightToneString as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 4, (leadingLightToneString as NSString).utf8String, -1, nil)
 
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let word = readColumn(stmt, 0)
@@ -752,7 +1013,9 @@ class DatabaseManager {
     }
 
     func supportsCharDict() -> Bool {
+        return withDatabase {
         return hasCharDictTable
+        }
     }
 
     private func selectColumns(
@@ -823,6 +1086,10 @@ class DatabaseManager {
     private func parseBopomofoQuery(_ bopomofo: String) -> (base: String, tone: Character?) {
         var text = bopomofo.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return ("", nil) }
+        if text.hasPrefix("˙") {
+            text.removeFirst()
+            return (text, "˙")
+        }
         if let last = text.last, isToneMark(last) {
             text.removeLast()
             return (text, last)
@@ -852,6 +1119,22 @@ class DatabaseManager {
         let queryBase = parseBopomofoQuery(bopomofo).base
         if base.isEmpty || queryBase.isEmpty { return false }
         return base == queryBase
+    }
+
+    private func shouldIncludeSearchResult(_ item: DictItem, forBopomofoKeyword keyword: String, isBopomofoKeyword: Bool) -> Bool {
+        guard isBopomofoKeyword else { return true }
+        let query = parseBopomofoQuery(keyword)
+        guard query.tone != nil else { return true }
+        guard let firstSyllable = BopomofoSplitter.split(phonetic: item.phonetic, count: max(1, item.idiom.count)).first else {
+            return false
+        }
+        return matchesBopomofo(firstSyllable, keyword)
+    }
+
+    private func isBopomofoText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return false }
+        return trimmed.allSatisfy { BopomofoData.isBopomofo($0) }
     }
 
     private func isCJKPrefixQuery(_ text: String) -> Bool {

@@ -115,7 +115,7 @@ class DefinitionParser {
 }
 
 
-struct ZhuyinIME {
+nonisolated struct ZhuyinIME {
     static let shared = ZhuyinIME()
     func getCandidates(for input: String) -> [String] {
         let currentBopomofo = extractLastBopomofo(from: input)
@@ -182,14 +182,10 @@ struct ContentView: View {
                     ZStack {
                         AppTheme.background.ignoresSafeArea()
                         
-                        GeometryReader { proxy in
+                        GeometryReader { _ in
                             let useCompactKeyboard = isPad
-                            let desiredKeyboardHeight: CGFloat = useCompactKeyboard ? 460 : 420
                             let adHeight: CGFloat = purchaseManager.isPremium ? 0 : (isPad ? (showCustomKeyboard ? 60 : 90) : 60)
                             let adSpacing: CGFloat = showCustomKeyboard ? (isPad ? 8 : 6) : 0
-                            let privacyRowHeight: CGFloat = showCustomKeyboard ? (useCompactKeyboard ? 28 : 32) : 0
-                            let footerMaxHeight = proxy.size.height * (isPad ? 1.0 : 0.4)
-                            let keyboardHeight = isPad ? desiredKeyboardHeight : min(desiredKeyboardHeight, max(0, footerMaxHeight - privacyRowHeight))
                             // 主結構 (垂直堆疊)
                             VStack(spacing: 0) {
                             
@@ -362,7 +358,7 @@ struct ContentView: View {
                     .navigationTitle("")
                     .navigationBarHidden(true)
                     .sheet(isPresented: $showLicense) { LicenseView() }
-                    .onChange(of: selectedTab) { _ in loadData() }
+                    .onChange(of: selectedTab) { _, _ in loadData() }
                     .onChange(of: speechInput.transcribedText) { _, val in
                         if !val.isEmpty { searchText = val }
                     }
@@ -408,22 +404,24 @@ struct ContentView: View {
         Purchases.shared.getOfferings { offerings, error in
             if let package = offerings?.current?.availablePackages.first {
                 Purchases.shared.purchase(package: package) { transaction, customerInfo, error, userCancelled in
-                    DispatchQueue.main.async { isPurchasing = false }
-                    if let error = error {
-                        if !userCancelled {
-                            DispatchQueue.main.async {
+                    DispatchQueue.main.async {
+                        isPurchasing = false
+                        if let error = error {
+                            if !userCancelled {
                                 alertMessage = "購買發生錯誤：\(error.localizedDescription)"
                                 showAlert = true
                             }
+                            return
                         }
-                    } else if customerInfo?.entitlements["premium"]?.isActive == true {
-                        DispatchQueue.main.async {
-                            purchaseManager.updatePremiumStatus(with: customerInfo)
+
+                        purchaseManager.updatePremiumStatus(with: customerInfo)
+                        if purchaseManager.hasPremiumAccess(customerInfo) {
                             alertMessage = "購買成功！廣告已移除。"
                             showAlert = true
+                        } else {
+                            alertMessage = "購買已完成，但尚未取得權益狀態。請稍後再試或使用恢復購買。"
+                            showAlert = true
                         }
-                    } else {
-                        purchaseManager.updatePremiumStatus(with: customerInfo)
                     }
                 }
             } else {
@@ -441,7 +439,9 @@ struct ContentView: View {
         Purchases.shared.restorePurchases { customerInfo, error in
             DispatchQueue.main.async {
                 isPurchasing = false
-                if let info = customerInfo, info.entitlements["premium"]?.isActive == true {
+                if let error = error {
+                    alertMessage = "恢復購買發生錯誤：\(error.localizedDescription)"
+                } else if purchaseManager.hasPremiumAccess(customerInfo) {
                     purchaseManager.updatePremiumStatus(with: customerInfo)
                     alertMessage = "已成功恢復您的購買權益！"
                 } else {
@@ -1379,7 +1379,7 @@ struct AdBannerView: UIViewRepresentable {
     func makeUIView(context: Context) -> BannerView {
         let adSize = UIDevice.current.userInterfaceIdiom == .pad ? AdSizeLeaderboard : AdSizeBanner
         let banner = BannerView(adSize: adSize)
-        banner.adUnitID = "ca-app-pub-8563333250584395/5867864061"
+        banner.adUnitID = "ca-app-pub-8563333250584395/6506533987"
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let rootVC = windowScene.windows.first?.rootViewController {
             banner.rootViewController = rootVC

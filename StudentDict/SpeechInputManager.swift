@@ -36,13 +36,46 @@ class SpeechInputManager: NSObject, ObservableObject, SFSpeechRecognizerDelegate
         // 2. 清理舊的錄音狀態
         cleanupSpeechSession()
         
-        SFSpeechRecognizer.requestAuthorization { status in
-            guard status == .authorized else {
-                DispatchQueue.main.async { self.errorMessage = "請至設定開啟語音權限" }
-                return
+        requestSpeechAuthorization { [weak self] speechAuthorized in
+            Task { @MainActor in
+                guard let self = self else { return }
+                guard speechAuthorized else {
+                    self.errorMessage = "請至設定開啟語音辨識權限"
+                    self.isRecording = false
+                    return
+                }
+
+                self.requestMicrophonePermission { [weak self] microphoneAuthorized in
+                    Task { @MainActor in
+                        guard let self = self else { return }
+                        guard microphoneAuthorized else {
+                            self.errorMessage = "請至設定開啟麥克風權限"
+                            self.isRecording = false
+                            return
+                        }
+
+                        self.beginRecordingSession()
+                    }
+                }
             }
         }
-        
+    }
+
+    private func requestSpeechAuthorization(_ completion: @escaping (Bool) -> Void) {
+        SFSpeechRecognizer.requestAuthorization { status in
+            completion(status == .authorized)
+        }
+    }
+
+    private func requestMicrophonePermission(_ completion: @escaping (Bool) -> Void) {
+        if #available(iOS 17.0, *) {
+            AVAudioApplication.requestRecordPermission(completionHandler: completion)
+        } else {
+            AVAudioSession.sharedInstance().requestRecordPermission(completion)
+        }
+    }
+
+    private func beginRecordingSession() {
         let audioSession = AVAudioSession.sharedInstance()
         do {
             // 設定為錄音模式
@@ -60,19 +93,19 @@ class SpeechInputManager: NSObject, ObservableObject, SFSpeechRecognizerDelegate
         let inputNode = audioEngine.inputNode
         
         recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self = self else { return }
-            var isFinal = false
-            
-            if let result = result {
-                DispatchQueue.main.async {
+            Task { @MainActor in
+                guard let self = self else { return }
+                var isFinal = false
+
+                if let result = result {
                     self.transcribedText = result.bestTranscription.formattedString
+                    isFinal = result.isFinal
+                    self.resetSilenceTimer()
                 }
-                isFinal = result.isFinal
-                self.resetSilenceTimer()
-            }
-            
-            if error != nil || isFinal {
-                self.stopRecording()
+
+                if error != nil || isFinal {
+                    self.stopRecording()
+                }
             }
         }
         
